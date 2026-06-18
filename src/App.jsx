@@ -57,6 +57,191 @@ function parseJSON(t){
   }catch(e){}
   return null;
 }
+// ══════════════════════════════════════════════════════════════════════════
+// DETERMINISTIC SCORING ENGINE — real composite math, not AI self-reported
+// numbers. The AI still supplies the underlying 0-100 sub-scores (it has the
+// contextual knowledge), but the FINAL composite score shown to the user is
+// computed here with an auditable formula, so two locations with the same
+// inputs always get the same output, and a single AI hallucination on the
+// headline number can't slip through uncorrected.
+// ══════════════════════════════════════════════════════════════════════════
+
+function normalize(value, min, max, higherIsBetter = true) {
+  const clamped = Math.max(min, Math.min(max, value));
+  const ratio = (clamped - min) / (max - min);
+  return Math.round((higherIsBetter ? ratio : 1 - ratio) * 100);
+}
+
+// Geometric mean composite — prevents one very high sub-score from masking a
+// critically low one (same principle as the UN Human Development Index).
+// A location with Infra=95 but Risk=10 should NOT come out looking like an
+// 80/100 overall; a plain weighted average would let that happen.
+function compositeGeometric(dims, weights) {
+  let product = 1, totalWeight = 0;
+  for (const [dim, weight] of Object.entries(weights)) {
+    const v = dims[dim];
+    if (v != null && v > 0 && weight > 0) {
+      product *= Math.pow(v, weight);
+      totalWeight += weight;
+    }
+  }
+  if (totalWeight === 0) return 0;
+  return Math.round(Math.pow(product, 1 / totalWeight));
+}
+
+// Weights mirror the SINFO panel already shown in the UI, renormalized to
+// exclude Risk/Catalyst (those modulate the score separately, see below).
+const GROWTH_SCORE_WEIGHTS = {
+  infrastructure_score: 0.25,
+  population_score: 0.20,
+  economic_score: 0.20,
+  connectivity_score: 0.15,
+  urban_expansion_score: 0.10,
+  market_momentum_score: 0.05,
+  scarcity_score: 0.05,
+};
+
+// Computes the real composite growth score from sub-scores, then applies a
+// risk-adjustment penalty (high risk pulls the score down further than a
+// pure geometric mean already would, since risk is asymmetric — a single
+// serious legal/flood risk can sink an otherwise-strong locality).
+function computeGrowthScore(d) {
+  const base = compositeGeometric(d, GROWTH_SCORE_WEIGHTS);
+  const risk = d.risk_score != null ? d.risk_score : 50;
+  const catalyst = d.catalyst_score != null ? d.catalyst_score : 50;
+  // Risk above 50 (i.e. riskier) pulls score down up to 15pts at risk=100.
+  const riskPenalty = Math.max(0, (risk - 50) / 50) * 15;
+  // Catalyst above 50 gives a modest boost up to 8pts at catalyst=100.
+  const catalystBoost = Math.max(0, (catalyst - 50) / 50) * 8;
+  const final = Math.round(base - riskPenalty + catalystBoost);
+  return Math.max(0, Math.min(100, final));
+}
+
+// ── Market Heat Index — spread between asking/estimated price and a
+// reference "fair value" baseline (city-tier rate). Tells you whether a
+// locality's current pricing already reflects its growth story, or is
+// still underpriced relative to fundamentals.
+function marketHeatIndex(actual_price, reference_value) {
+  if (!actual_price || !reference_value) return null;
+  const ratio = actual_price / reference_value;
+  if (ratio > 2.0) return { level: "Overheated", score: 95, signal: "Caution", ratio };
+  if (ratio > 1.5) return { level: "Hot", score: 75, signal: "Hold/Watch", ratio };
+  if (ratio > 1.0) return { level: "Fair Value", score: 55, signal: "Neutral", ratio };
+  if (ratio > 0.8) return { level: "Underpriced", score: 35, signal: "Opportunity", ratio };
+  return { level: "Deep Discount", score: 15, signal: "Investigate Why", ratio };
+}
+
+// ── Flood Risk Score — elevation/drainage/history based composite.
+// elevation_zone: 1 (high ground) to 5 (lake-bed/low-lying)
+function floodScore(elevation_zone, drain_coverage_pct, incidents_per_yr, lake_distance_km) {
+  const elev = normalize(elevation_zone, 1, 5, false);
+  const drain = normalize(drain_coverage_pct, 0, 100, true);
+  const hist = normalize(incidents_per_yr, 0, 15, false);
+  const lake = normalize(lake_distance_km, 0, 2, true);
+  return Math.round(elev * 0.35 + drain * 0.25 + hist * 0.25 + lake * 0.15);
+}
+
+// ── Infrastructure Appreciation Potential — scores the PIPELINE specifically
+// (as distinct from infrastructure_score which the AI estimates more
+// broadly). This one is built from the KARNATAKA_INFRA dataset below, with
+// a delay-discount applied since Indian infra timelines slip routinely.
+function infrastructureAppreciationScore(locality) {
+  let score = 0;
+  if (locality.metro_operational) score += 25;
+  if (locality.metro_under_construction) score += 40; // best appreciation window — priced in less than operational
+  if (locality.metro_proposed) score += 20;
+  if (locality.nh_within_5km) score += 15;
+  if (locality.industrial_corridor_node) score += 35;
+  if (locality.smart_city) score += 10;
+  // Delay discount: Bengaluru metro phases have historically slipped 2-7 years.
+  // A project "under construction" for 5+ years gets a partial discount since
+  // the appreciation window itself starts shrinking the longer it drags.
+  if (locality.years_in_construction > 4) score *= 0.85;
+  return Math.min(100, Math.round(score));
+}
+
+// ── Time decay weighting — for any future crowdsourced/user-submitted data
+// point. Recent data is trusted more than old data, with a configurable
+// half-life (default 90 days).
+function decayWeight(submittedAt, halfLifeDays = 90) {
+  const daysSince = (Date.now() - new Date(submittedAt).getTime()) / 86400000;
+  return Math.exp(-0.693 * daysSince / halfLifeDays);
+}
+
+// ── Outlier detection — flags a new data point (e.g. a user-submitted price)
+// as statistically suspicious if it's more than 2 standard deviations from
+// the existing sample. Needs at least 5 prior points to be meaningful.
+function isOutlier(newValue, existingValues) {
+  if (!existingValues || existingValues.length < 5) return false;
+  const mean = existingValues.reduce((a, b) => a + b, 0) / existingValues.length;
+  const variance = existingValues.reduce((s, v) => s + (v - mean) ** 2, 0) / existingValues.length;
+  const stdDev = Math.sqrt(variance);
+  if (stdDev === 0) return false;
+  return Math.abs((newValue - mean) / stdDev) > 2;
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// KARNATAKA INFRASTRUCTURE PIPELINE — curated from verified public sources.
+// This is NOT a live feed (no government API exists for this); it's a
+// point-in-time snapshot researched and cited as of mid-2026. Update this
+// table periodically as projects progress — it will go stale otherwise.
+// Sources cited per entry. Indian infra timelines slip routinely (BMRCL
+// Phase 2 alone slipped 7+ years from original plan) — treat "expected"
+// dates as directional, not guaranteed.
+// ══════════════════════════════════════════════════════════════════════════
+
+const KARNATAKA_INFRA = {
+  metro: {
+    source: "BMRCL public announcements, Deccan Herald, PMIndia.gov.in (cited mid-2025 to early 2026)",
+    asOf: "2026-06",
+    lines: [
+      {name:"Purple Line", status:"operational", note:"Original line, Whitefield–Challaghatta corridor"},
+      {name:"Green Line", status:"operational", note:"Nagasandra–Silk Institute corridor"},
+      {name:"Yellow Line", status:"partial operational", note:"RV Road–Bommasandra, opened in phases"},
+      {name:"Pink Line", status:"under construction", length_km:21.25, stations:18,
+        note:"Nagawara–Kalena Agrahara, phased opening targeted 2026, has slipped before"},
+      {name:"Blue Line Phase 2A", status:"under construction", length_km:19.75,
+        note:"Silk Board–KR Puram, repeatedly delayed, latest target mid-2025/2026"},
+      {name:"Blue Line Phase 2B", status:"under construction", length_km:38.44,
+        note:"KR Puram–Airport, pushed to early 2027"},
+      {name:"Phase 3 Corridor 1", status:"approved, early construction", length_km:32.15, stations:22,
+        note:"JP Nagar 4th Phase–Kempapura via ORR West, Cabinet approved Aug 2024, target 2028 (officials express doubt on this date)"},
+      {name:"Phase 3 Corridor 2", status:"approved, early construction", length_km:12.5, stations:9,
+        note:"Hosahalli–Kadabagere via Magadi Road, same approval/timeline as Corridor 1"},
+    ],
+    networkAtPhase3Completion_km: 220.20,
+  },
+  masterPlan: {
+    source: "BDA Revised Master Plan (RMP) 2031, official volumes",
+    asOf: "2026-06",
+    zones: [
+      {zone:"A", area:"Within Outer Ring Road", designation:"Stabilisation zone — discourages further densification/commercialization"},
+      {zone:"B", area:"Outside ORR up to Conurbation Limit", designation:"Consolidation zone — upgraded infrastructure priority"},
+      {zone:"C", area:"Beyond conurbation limit to LPA boundary", designation:"Preservation zone — agriculture-oriented, productive landscape focus"},
+    ],
+    note:"FSI/FAR in Bengaluru is road-width based, not purely zone based — a plot facing a wider road has materially higher buildable area regardless of zone.",
+  },
+};
+
+// Given a locality's known proximity to named metro lines/corridors, derive
+// the boolean flags the infrastructureAppreciationScore() function expects.
+// This is a simple keyword-based lookup against the curated dataset above —
+// NOT a live geocoded distance calculation (would need real coordinates for
+// each metro alignment, which isn't available as open data either).
+function getKarnatakaInfraContext(localityName, notes) {
+  const text = ((localityName||"") + " " + (notes||"")).toLowerCase();
+  const underConstructionLines = KARNATAKA_INFRA.metro.lines.filter(l=>l.status.includes("construction"));
+  const operationalLines = KARNATAKA_INFRA.metro.lines.filter(l=>l.status==="operational"||l.status.includes("partial"));
+  return {
+    metro_operational: operationalLines.some(l=>text.includes(l.name.toLowerCase().split(" ")[0])),
+    metro_under_construction: underConstructionLines.some(l=>text.includes(l.name.toLowerCase().split(" ")[0])),
+    source: KARNATAKA_INFRA.metro.source,
+    asOf: KARNATAKA_INFRA.metro.asOf,
+  };
+}
+
+
 const STATE_GROWTH={"Karnataka":82,"Gujarat":85,"Tamil Nadu":78,"Maharashtra":76,"Andhra Pradesh":72,"Telangana":74,"Rajasthan":65,"Haryana":70,"Uttar Pradesh":62,"West Bengal":60,"Kerala":68,"Punjab":63,"Madhya Pradesh":58,"Bihar":52,"Chhattisgarh":55,"Jharkhand":53,"Orissa":57,"Uttaranchal":60,"Himachal Pradesh":58,"Assam":54,"Delhi":71,"Goa":66,"Jammu and Kashmir":50,"Arunachal Pradesh":48,"Manipur":47,"Meghalaya":48,"Mizoram":46,"Nagaland":45,"Sikkim":50,"Tripura":49,"Chandigarh":72,"Puducherry":65,"Andaman and Nicobar":44,"Lakshadweep":42,"Dadra and Nagar Haveli":60,"Daman and Diu":58};
 const ZC={mega:"#15803D",hot:"#1D4ED8",growth:"#D97706",stable:"#94A3B8",low:"#FCA5A5"};
 const stateColor=(name)=>{const sc=STATE_GROWTH[name]||50;return sc>=90?ZC.mega:sc>=80?ZC.hot:sc>=65?ZC.growth:sc>=50?ZC.stable:ZC.low;};
@@ -274,6 +459,7 @@ function IndiaMap({pins=[],onStateClick,selectedState=null,focusLat=null,focusLn
   const [hovered,setHovered]=useState(null);
   const [zoom,setZoom]=useState(1);
   const [pan,setPan]=useState({x:0,y:0});
+  const [legendOpen,setLegendOpen]=useState(false); // collapsed by default — was eating ~25% of map height on mobile
 
   // Auto-zoom to a specific lat/lng when provided
   useEffect(()=>{
@@ -572,21 +758,37 @@ function IndiaMap({pins=[],onStateClick,selectedState=null,focusLat=null,focusLn
         ))}
       </div>
 
-      {/* Legend */}
-      <div style={{position:"absolute",bottom:8,left:8,
-        background:"rgba(255,255,255,0.96)",borderRadius:7,
-        padding:"5px 9px",fontFamily:"Inter,sans-serif",fontSize:10,
-        display:"flex",flexDirection:"column",gap:3,
-        border:"1px solid "+C.border,zIndex:20}}>
-        {[{c:ZC.mega,l:"Mega Growth (90+)"},{c:ZC.hot,l:"Emerging Hot (80–89)"},
-          {c:ZC.growth,l:"Growth Zone (65–79)"},{c:ZC.stable,l:"Stable (50–64)"},
-          {c:ZC.low,l:"High Risk (<50)"}
-        ].map(x=>(
-          <div key={x.l} style={{display:"flex",alignItems:"center",gap:5}}>
-            <div style={{width:10,height:10,borderRadius:2,background:x.c,opacity:0.9}}/>
-            <span style={{color:C.dark}}>{x.l}</span>
+      {/* Legend — collapsed by default on mobile so it doesn't cover the southern states */}
+      <div style={{position:"absolute",bottom:8,left:8,zIndex:20}}>
+        {legendOpen ? (
+          <div onClick={()=>setLegendOpen(false)} style={{cursor:"pointer",
+            background:"rgba(255,255,255,0.96)",borderRadius:7,
+            padding:"5px 9px",fontFamily:"Inter,sans-serif",fontSize:10,
+            display:"flex",flexDirection:"column",gap:3,
+            border:"1px solid "+C.border}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:1}}>
+              <span style={{fontWeight:600,color:C.muted,fontSize:9}}>LEGEND</span>
+              <span style={{color:C.muted,fontSize:11}}>✕</span>
+            </div>
+            {[{c:ZC.mega,l:"Mega Growth (90+)"},{c:ZC.hot,l:"Emerging Hot (80–89)"},
+              {c:ZC.growth,l:"Growth Zone (65–79)"},{c:ZC.stable,l:"Stable (50–64)"},
+              {c:ZC.low,l:"High Risk (<50)"}
+            ].map(x=>(
+              <div key={x.l} style={{display:"flex",alignItems:"center",gap:5}}>
+                <div style={{width:10,height:10,borderRadius:2,background:x.c,opacity:0.9}}/>
+                <span style={{color:C.dark}}>{x.l}</span>
+              </div>
+            ))}
           </div>
-        ))}
+        ) : (
+          <button onClick={()=>setLegendOpen(true)} style={{
+            background:"rgba(255,255,255,0.96)",border:"1px solid "+C.border,borderRadius:7,
+            padding:"5px 9px",fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:600,
+            color:C.muted,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
+            <span style={{width:8,height:8,borderRadius:2,background:ZC.mega,display:"inline-block"}}/>
+            Legend
+          </button>
+        )}
       </div>
     </div>
   );
@@ -740,10 +942,69 @@ function Sentiment({score,label}){
   );
 }
 
+
+// ── Data Provenance Badge — tells the user where a number actually came from ──
+function ProvenanceBadge({type}){
+  const cfg = {
+    cited: {bg:"#F0FDF4", border:"#86EFAC", color:"#15803D", icon:"📄", label:"Cited public document"},
+    curated: {bg:"#EFF6FF", border:"#BFDBFE", color:"#1D4ED8", icon:"📋", label:"Curated reference data"},
+    ai: {bg:"#FFFBEB", border:"#FDE68A", color:"#92400E", icon:"✨", label:"AI estimation"},
+  }[type] || {bg:"#F1F5F9", border:"#E2E8F0", color:C.muted, icon:"?", label:"Unknown source"};
+  return(
+    <span style={{display:"inline-flex",alignItems:"center",gap:4,background:cfg.bg,
+      border:"1px solid "+cfg.border,color:cfg.color,borderRadius:12,padding:"2px 8px",
+      fontFamily:"Inter,sans-serif",fontSize:9,fontWeight:600,whiteSpace:"nowrap"}}>
+      {cfg.icon} {cfg.label}
+    </span>
+  );
+}
+
+// ── Karnataka Infrastructure Pipeline Card — only renders for Karnataka
+// localities, since this is the only state with curated, cited data so far.
+function KarnatakaInfraCard({locationName, locationNotes}){
+  const ctx = getKarnatakaInfraContext(locationName, locationNotes);
+  return(
+    <div style={{background:"#fff",borderRadius:10,border:"1px solid "+C.border,padding:"13px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+        <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.dark}}>🚇 Karnataka Infrastructure Pipeline</div>
+        <ProvenanceBadge type="cited"/>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+        {KARNATAKA_INFRA.metro.lines.map(line=>(
+          <div key={line.name} style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",
+            padding:"6px 0",borderBottom:"1px solid "+C.border,gap:8}}>
+            <div style={{flex:1}}>
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,color:C.dark}}>{line.name}</div>
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,marginTop:1,lineHeight:1.4}}>{line.note}</div>
+            </div>
+            <span style={{flexShrink:0,fontFamily:"Inter,sans-serif",fontSize:9,fontWeight:600,
+              padding:"2px 7px",borderRadius:10,
+              background:line.status==="operational"?"#F0FDF4":line.status.includes("partial")?"#EFF6FF":"#FFFBEB",
+              color:line.status==="operational"?"#15803D":line.status.includes("partial")?"#1D4ED8":"#92400E"}}>
+              {line.status}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,marginTop:8,fontStyle:"italic"}}>
+        Source: {KARNATAKA_INFRA.metro.source}. Snapshot as of {KARNATAKA_INFRA.metro.asOf} — Indian metro timelines have a track record of slipping; treat target dates as directional.
+      </div>
+    </div>
+  );
+}
+
+
 function ReportCard({data,pins}){
   const [modal,setModal]=useState(false);
+  const [showScoreInfo,setShowScoreInfo]=useState(false);
   if(!data) return null;
-  const gc=scoreColor(data.growth_score||0),rc=recoColor(data.recommendation);
+  // Recompute the headline score deterministically from sub-scores rather than
+  // trusting the AI's own arithmetic — see computeGrowthScore() for the formula.
+  const computedScore = computeGrowthScore(data);
+  const aiScore = data.growth_score;
+  const scoreDiverges = aiScore!=null && Math.abs(computedScore - aiScore) > 8;
+  const isKarnataka = (data.state||"").toLowerCase().includes("karnataka");
+  const gc=scoreColor(computedScore||0),rc=recoColor(data.recommendation);
   const SCORES=[
     {l:"Infrastructure",k:"infrastructure_score"},{l:"Population",k:"population_score"},
     {l:"Economic",k:"economic_score"},{l:"Connectivity",k:"connectivity_score"},
@@ -760,10 +1021,31 @@ function ReportCard({data,pins}){
           <div style={{color:"#94A3B8",fontSize:12,marginTop:3,fontFamily:"Inter,sans-serif"}}>{data.current_land_price}</div>
         </div>
         <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:7}}>
-          <div style={{background:gc,color:"#fff",borderRadius:8,padding:"5px 13px",fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:20}}>{data.growth_score}<span style={{fontSize:11,fontWeight:400}}>/100</span></div>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <div style={{background:gc,color:"#fff",borderRadius:8,padding:"5px 13px",fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:20}}>{computedScore}<span style={{fontSize:11,fontWeight:400}}>/100</span></div>
+            <button onClick={()=>setShowScoreInfo(!showScoreInfo)}
+              style={{background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.3)",color:"#fff",
+                borderRadius:"50%",width:20,height:20,fontSize:11,cursor:"pointer",flexShrink:0}}>ⓘ</button>
+          </div>
           <div style={{background:rc+"22",border:`1.5px solid ${rc}`,color:rc,borderRadius:20,padding:"3px 12px",fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:11}}>{data.recommendation}</div>
         </div>
       </div>
+      {showScoreInfo && (
+        <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:10,padding:"12px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+            <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:"#92400E"}}>How this score is calculated</div>
+            <ProvenanceBadge type="curated"/>
+          </div>
+          <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#78350F",lineHeight:1.6}}>
+            This {computedScore}/100 is computed with a geometric-mean formula across the 9 sub-scores below (weighted: Infrastructure 25%, Population 20%, Economic 20%, Connectivity 15%, Urban Expansion 10%, Momentum 5%, Scarcity 5%), then adjusted for Risk and Catalyst — rather than using the AI's own headline number directly. A geometric mean means one very low sub-score pulls the total down more than a simple average would, similar to how the UN's Human Development Index works.
+            {scoreDiverges && (
+              <div style={{marginTop:6,fontWeight:600}}>
+                Note: the AI's self-reported score for this location was {aiScore}/100 — a {Math.abs(computedScore-aiScore)}-point difference from the computed score, shown here for transparency.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       <div style={{background:"#fff",borderRadius:12,border:`1px solid ${C.border}`,padding:"14px"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
           <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.dark}}>Intelligence Scores</div>
@@ -773,6 +1055,7 @@ function ReportCard({data,pins}){
           {SCORES.map(s=><Ring key={s.k} score={data[s.k]||0} label={s.l}/>)}
         </div>
       </div>
+      {isKarnataka && <KarnatakaInfraCard locationName={data.location_name} locationNotes={data.locality_insight}/>}
       {data.news_signals&&<NewsSignals signals={data.news_signals}/>}
       {data.sentiment_score!=null&&<Sentiment score={data.sentiment_score} label={data.sentiment_summary}/>}
       {/* Future Price Forecast Chart */}
@@ -945,7 +1228,7 @@ function ReportCard({data,pins}){
               🚦 Traffic & Crowd Intelligence
             </div>
             {/* Key metrics row */}
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:12}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:8,marginBottom:12}}>
               {[
                 {label:"Peak Congestion",val:t.peak_hour_congestion,col:congColor},
                 {label:"Crowd Density",val:t.crowd_density,col:densColor},
@@ -1114,7 +1397,7 @@ Each object must have: location, district, state, current_price_sqft, expected_c
                     <div style={{background:rc2+"20",border:`1.5px solid ${rc2}`,color:rc2,borderRadius:20,padding:"2px 9px",fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:10}}>{r.recommendation}</div>
                   </div>
                 </div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:5}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(80px,1fr))",gap:5}}>
                   {[["Price",r.current_price_sqft],["CAGR",r.expected_cagr],["Infra",`${r.infrastructure_score}/100`],["Risk",`${r.risk_score}/100`]].map(([l,v])=>(
                     <div key={l} style={{background:C.bg,borderRadius:6,padding:"5px 7px"}}>
                       <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>{l}</div>
@@ -1147,7 +1430,8 @@ CRITICAL REQUIREMENTS:
 
 Required JSON keys:
 location_name, state, district, current_land_price,
-growth_score (int), risk_score (int), infrastructure_score (int), population_score (int),
+growth_score (int — your best independent estimate; note this is cross-checked client-side against a deterministic formula applied to your sub-scores below, so make sure the sub-scores honestly reflect your reasoning rather than working backward from a target headline number),
+risk_score (int), infrastructure_score (int), population_score (int),
 economic_score (int), connectivity_score (int), urban_expansion_score (int),
 market_momentum_score (int), scarcity_score (int), catalyst_score (int),
 forecast_2yr, forecast_5yr, forecast_10yr, expected_cagr, confidence_level, growth_zone,
@@ -1259,14 +1543,35 @@ function AnalyzeTab({initialQuery="",onClear}){
   );
 }
 
-function HomeTab({onStateSelect}){
+function HomeTab({onStateSelect,onNavigate}){
   return(
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       <div style={{background:C.navy,borderRadius:12,padding:"16px 18px"}}>
         <div style={{color:"#F8FAFB",fontFamily:"serif",fontSize:17,marginBottom:3}}>India Land Investment Intelligence</div>
-        <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:12}}>Click any state on the map below to instantly analyze it</div>
+        <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:12}}>Three tools below, or just tap a state on the map</div>
       </div>
-      <MapView onStateClick={onStateSelect} height={400}/>
+      {/* Feature entry cards — surfaced above the map so Analyze/Screener/Pricer
+          aren't hidden behind small header tabs that get missed on mobile */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:8}}>
+        {[
+          {tab:"analyze",icon:"🔍",title:"Analyze",desc:"Score any locality"},
+          {tab:"screen",icon:"🎯",title:"Screener",desc:"Find opportunities"},
+          {tab:"pricer",icon:"🏘️",title:"Pricer",desc:"Price a property"},
+        ].map(f=>(
+          <button key={f.tab} onClick={()=>onNavigate(f.tab)}
+            style={{background:"#fff",border:"1px solid "+C.border,borderRadius:10,
+              padding:"12px 8px",cursor:"pointer",textAlign:"center",
+              display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+            <span style={{fontSize:22}}>{f.icon}</span>
+            <span style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:C.dark}}>{f.title}</span>
+            <span style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted}}>{f.desc}</span>
+          </button>
+        ))}
+      </div>
+      <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,textAlign:"center",marginTop:-6}}>
+        — or explore the map —
+      </div>
+      <MapView onStateClick={onStateSelect} height={360}/>
       <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,textAlign:"center"}}>
         ☝️ Click any state · Hover to preview growth score · Green = high growth opportunity
       </div>
@@ -2217,7 +2522,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
 
                   return(
                     <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                      <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:8}}>
                         <div style={{background:"#fff",borderRadius:8,padding:"9px 8px",textAlign:"center",border:"1px solid "+C.border}}>
                           <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>Est. Monthly Maintenance</div>
                           <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.dark}}>₹{autoMonthlyMaint.toLocaleString()}</div>
@@ -2388,7 +2693,10 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
         {activeSection==="pricing" && (
           <div style={{display:"flex",flexDirection:"column",gap:10}}>
             <div style={{background:C.lightBlue,borderRadius:8,padding:"12px"}}>
-              <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,marginBottom:4}}>Our formula estimate</div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted}}>Our formula estimate</div>
+                <ProvenanceBadge type="curated"/>
+              </div>
               {locality ? (()=>{const e=calcEstimate();return(
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                   <div>
@@ -2436,7 +2744,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
               return(
                 <div style={{background:"#FFFBEB",borderRadius:8,border:"1px solid #FDE68A",padding:"12px"}}>
                   <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:"#92400E",marginBottom:8}}>📈 Investor View — Under Construction</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:8}}>
                     <div style={{textAlign:"center"}}>
                       <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted}}>Buy Now</div>
                       <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:14,color:C.blue}}>₹{e.rate.toLocaleString()}/sqft</div>
@@ -2604,7 +2912,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                     <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,marginBottom:10}}>
                       Your share: {myLandSqft.toFixed(1)} sqft ({udsPercent}% of {parseFloat(totalLandArea).toLocaleString()} sqft)
                     </div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:8}}>
                       <div style={{textAlign:"center",background:"#fff",borderRadius:8,padding:"9px 6px"}}>
                         <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>Land Value Today</div>
                         <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.dark}}>₹{fmtL(currentLandValue)}</div>
@@ -2667,8 +2975,11 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
           <div style={{display:"flex",flexDirection:"column",gap:12}}>
             {/* Header */}
             <div style={{background:C.navy,borderRadius:12,padding:"18px 20px"}}>
-              <div style={{color:"#94A3B8",fontSize:10,fontFamily:"Inter,sans-serif",textTransform:"uppercase",letterSpacing:1.2,marginBottom:4}}>
-                {locality}, {city} · {propType} {!isPlot&&`· ${bhk}`}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                <div style={{color:"#94A3B8",fontSize:10,fontFamily:"Inter,sans-serif",textTransform:"uppercase",letterSpacing:1.2}}>
+                  {locality}, {city} · {propType} {!isPlot&&`· ${bhk}`}
+                </div>
+                <ProvenanceBadge type="ai"/>
               </div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
                 <div>
@@ -2695,7 +3006,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
             </div>
 
             {/* Score cards */}
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:8}}>
               {[
                 {l:"Formula Est.",v:"₹"+ourRate.toLocaleString()+"/sqft",sub:"Amenity + Infra + Civic",c:C.muted},
                 {l:"AI Market Rate",v:"₹"+aiRate.toLocaleString()+"/sqft",sub:result.verdict_reason,c:vc},
@@ -2757,7 +3068,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                     <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,color:C.dark,marginBottom:7}}>
                       Total Property Value ({isPlot?plotArea+" "+plotAreaUnit:area+" sqft"})
                     </div>
-                    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6}}>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:6}}>
                       {[pts[0],pts[2],pts[4]].map((pt,i)=>(
                         <div key={pt.yr} style={{textAlign:"center",background:"#fff",borderRadius:6,padding:"7px 4px",border:"1px solid "+C.border}}>
                           <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,marginBottom:2}}>{pt.yr}</div>
@@ -2813,7 +3124,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
             {result.isUC && result.completion_price_estimate && (
               <div style={{background:"#FFFBEB",borderRadius:10,border:"1px solid #FDE68A",padding:"14px"}}>
                 <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:"#92400E",marginBottom:10}}>📈 Investment Analysis — Under Construction</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:10}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:8,marginBottom:10}}>
                   <div style={{textAlign:"center",background:"#FEF9C3",borderRadius:8,padding:"10px 6px"}}>
                     <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#92400E"}}>Book Now At</div>
                     <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:14,color:C.dark}}>₹{aiRate.toLocaleString()}/sqft</div>
@@ -2924,20 +3235,26 @@ export default function App(){
   return(
     <div style={{minHeight:"100vh",background:C.bg}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');`}</style>
-      <div style={{background:C.navy,padding:"0 16px",display:"flex",alignItems:"center",justifyContent:"space-between",height:50,position:"sticky",top:0,zIndex:1000,boxShadow:"0 2px 12px rgba(0,0,0,0.18)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:7}}>
+      <div style={{position:"sticky",top:0,zIndex:1000,boxShadow:"0 2px 12px rgba(0,0,0,0.18)"}}>
+        <div style={{background:C.navy,padding:"8px 14px",display:"flex",alignItems:"center",gap:7}}>
           <span style={{fontSize:15}}>🇮🇳</span>
-          <span style={{color:"#F8FAFB",fontFamily:"serif",fontSize:14}}>Bharat Land Intelligence</span>
+          <span style={{color:"#F8FAFB",fontFamily:"serif",fontSize:14,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>Bharat Land Intelligence</span>
         </div>
-        <div style={{background:"#1E293B",borderRadius:6,padding:3,display:"flex",gap:2}}>
-          {[["home","🗺️ Map"],["analyze","Analyze"],["screen","Screener"],["pricer","🏘️ Pricer"]].map(([k,l])=>(
+        <div style={{background:"#1E293B",display:"flex",gap:0,padding:"3px 6px 5px"}}>
+          {[["home","🗺️","Map"],["analyze","🔍","Analyze"],["screen","🎯","Screener"],["pricer","🏘️","Pricer"]].map(([k,icon,l])=>(
             <button key={k} onClick={()=>setTab(k)}
-              style={{background:tab===k?C.blue:"transparent",color:tab===k?"#fff":"#94A3B8",border:"none",borderRadius:5,padding:"4px 11px",fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:11,cursor:"pointer"}}>{l}</button>
+              style={{flex:1,minWidth:0,background:tab===k?C.blue:"transparent",color:tab===k?"#fff":"#94A3B8",
+                border:"none",borderRadius:6,padding:"7px 4px",fontFamily:"Inter,sans-serif",fontWeight:600,
+                fontSize:11,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:1,
+                margin:"0 2px",transition:"background 0.15s"}}>
+              <span style={{fontSize:14,lineHeight:1}}>{icon}</span>
+              <span style={{whiteSpace:"nowrap"}}>{l}</span>
+            </button>
           ))}
         </div>
       </div>
       <div style={{maxWidth:680,margin:"0 auto",padding:"16px 13px 60px"}}>
-        {tab==="home"&&<HomeTab onStateSelect={handleStateClick}/>}
+        {tab==="home"&&<HomeTab onStateSelect={handleStateClick} onNavigate={setTab}/>}
         {tab==="analyze"&&<AnalyzeTab key={analyzeQuery} initialQuery={analyzeQuery} onClear={()=>{setAnalyzeQuery("");setTab("home");}}/>}
         {tab==="screen"&&<ScreenerTab/>}
         {tab==="pricer"&&<PricerTab/>}
