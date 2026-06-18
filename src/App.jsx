@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, Component } from "react";
+import { useState, useEffect, useRef, useMemo, Component } from "react";
 import GoogleMapView from "./components/GoogleMapView";
 
 // API endpoint: in this Claude.ai artifact preview, call Anthropic directly.
@@ -1553,7 +1553,8 @@ function AnalyzeTab({initialQuery="",onClear}){
             {streamChars<3000?"Scanning infrastructure, news signals & economic data":
              streamChars<9000?"Reading growth signals…":
              streamChars<18000?"Compiling civic & traffic intelligence…":
-             "Building price history & forecasts…"}
+             streamChars<30000?"Building price history & forecasts…":
+             "Still working — detailed reports can take up to a couple of minutes"}
           </div>
           {/* Indeterminate progress animation — we don't have real byte-level
               feedback from the API (non-streaming request), so this is an
@@ -1580,6 +1581,17 @@ function AnalyzeTab({initialQuery="",onClear}){
 function HomeTab({onStateSelect,onNavigate}){
   const [view,setView]=useState("search"); // "search" (default landing) or "map" (opened via link below)
   const [q,setQ]=useState("");
+
+  // Flatten the curated city/area clusters across every state into one ranked
+  // list — these are real named localities with real scores (see
+  // REGION_CLUSTERS above), not a single hardcoded "top pick" like before.
+  const topCities=useMemo(()=>{
+    const flat=[];
+    Object.entries(REGION_CLUSTERS).forEach(([state,arr])=>{
+      arr.forEach(c=>flat.push({...c,state}));
+    });
+    return flat.sort((a,b)=>b.score-a.score).slice(0,12);
+  },[]);
 
   const goAnalyze=(loc)=>{
     if(!loc.trim()) return;
@@ -1663,9 +1675,32 @@ function HomeTab({onStateSelect,onNavigate}){
         </button>
       </div>
 
+      {/* Top investment areas — real ranked list pulled from curated city/area
+          data across every state (REGION_CLUSTERS), not a single hardcoded
+          pick. Tapping any row jumps straight into a full Analyze report. */}
+      <div style={{fontFamily:"Inter,sans-serif",fontSize:10.5,fontWeight:700,color:C.muted,
+        textTransform:"uppercase",letterSpacing:0.4,marginBottom:9}}>Top investment areas across India</div>
+      <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:18}}>
+        {topCities.map((c,i)=>(
+          <button key={c.name} onClick={()=>goAnalyze(c.name.split(" (")[0]+", "+c.state)}
+            style={{display:"flex",alignItems:"center",gap:10,background:"#fff",
+              border:"1px solid "+C.border,borderRadius:10,padding:"10px 12px",
+              cursor:"pointer",textAlign:"left",width:"100%"}}>
+            <span style={{fontFamily:"serif",fontSize:12,color:"#CBD5E1",width:16,flexShrink:0}}>{i+1}</span>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontFamily:"serif",fontSize:13,color:C.dark,whiteSpace:"nowrap",
+                overflow:"hidden",textOverflow:"ellipsis"}}>{c.name}</div>
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:10.5,color:C.muted}}>{c.state}</div>
+            </div>
+            <span style={{flexShrink:0,background:scoreColor(c.score),color:"#fff",borderRadius:5,
+              padding:"3px 8px",fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:11}}>{c.score}</span>
+          </button>
+        ))}
+      </div>
+
       <div style={{background:"#FFFBEB",borderRadius:9,border:`1px solid #FDE68A`,padding:"11px 13px",
         fontFamily:"Inter,sans-serif",fontSize:12,color:"#92400E"}}>
-        🔮 <strong>Top pick right now:</strong> Gujarat (Score 85) — Dholera Smart City + semiconductor fab zone + DMIC corridor = rare convergence of three major catalysts.
+        🔮 <strong>Why Dholera SIR leads:</strong> Smart City status + semiconductor fab zone + DMIC corridor — a rare convergence of three major catalysts in one location.
       </div>
     </div>
   );
