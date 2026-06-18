@@ -84,6 +84,7 @@ export default function GoogleMapView({ pins = [], onStateClick, stateGrowth = {
     googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY,
   });
 
+  const [map, setMap] = useState(null);
   const [legendOpen, setLegendOpen] = useState(false);
   const [activePin, setActivePin] = useState(null);
   const [activeRegion, setActiveRegion] = useState(null);
