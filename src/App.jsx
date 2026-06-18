@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Component } from "react";
 import GoogleMapView from "./components/GoogleMapView";
 
 // API endpoint: in this Claude.ai artifact preview, call Anthropic directly.
@@ -1479,7 +1479,14 @@ function AnalyzeTab({initialQuery="",onClear}){
     if(initialQuery&&!ranOnce.current){ranOnce.current=true;setQ(initialQuery);doAnalyze(initialQuery);}
   },[initialQuery]);
 
-  const [streamChars,setStreamChars]=useState(0);
+  const [streamChars,setStreamChars]=useState(0); // repurposed as an elapsed-time tick counter for staged progress messages below
+
+  useEffect(()=>{
+    if(!loading){setStreamChars(0);return;}
+    const start=Date.now();
+    const iv=setInterval(()=>setStreamChars(Date.now()-start),300);
+    return ()=>clearInterval(iv);
+  },[loading]);
 
   const doAnalyze=async(query)=>{
     const loc=(query||q).trim();
@@ -1491,52 +1498,16 @@ function AnalyzeTab({initialQuery="",onClear}){
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:8000,system:SYS,
           messages:[{role:"user",content:`Analyze for land investment: ${loc}, India`}],
-          cacheKey,cacheType:"analyze",stream:true}),
+          cacheKey,cacheType:"analyze"}),
       });
-
-      if(!res.ok || !res.body){
-        // Fallback: try reading as plain JSON in case this was a cache-hit
-        // response (the proxy always returns those as plain JSON, not a stream).
-        const d=await res.json().catch(()=>null);
-        if(d?.error){setError("API: "+d.error.message);setLoading(false);return;}
-        setError("Request failed.");setLoading(false);return;
+      const raw=await res.text();
+      let d=null; try{ d=JSON.parse(raw); }catch{}
+      if(!res.ok){
+        const msg=d?.error?.message||raw.slice(0,200)||"No response body.";
+        setError(`Request failed (HTTP ${res.status}). ${msg}`);setLoading(false);return;
       }
-
-      const contentType=res.headers.get("content-type")||"";
-      let text="";
-
-      if(contentType.includes("application/json")){
-        // Cache hit — proxy returned a complete plain JSON response, not a stream.
-        const d=await res.json();
-        if(d.error){setError("API: "+d.error.message);setLoading(false);return;}
-        text=d.content?.map(b=>b.text||"").join("")||"";
-      } else {
-        // Real stream — read incrementally and show live progress as text arrives.
-        const reader=res.body.getReader();
-        const decoder=new TextDecoder();
-        let buffer="";
-        while(true){
-          const {done,value}=await reader.read();
-          if(done) break;
-          buffer+=decoder.decode(value,{stream:true});
-          const lines=buffer.split("\n");
-          buffer=lines.pop();
-          for(const line of lines){
-            if(!line.startsWith("data: ")) continue;
-            try{
-              const evt=JSON.parse(line.slice(6));
-              if(evt.type==="content_block_delta" && evt.delta?.text){
-                text+=evt.delta.text;
-                setStreamChars(text.length);
-              }
-              if(evt.type==="error"){
-                setError("API: "+(evt.error?.message||"stream error"));
-              }
-            }catch{ /* incomplete fragment, next chunk completes it */ }
-          }
-        }
-      }
-
+      if(d?.error){setError("API: "+d.error.message);setLoading(false);return;}
+      const text=d?.content?.map(b=>b.text||"").join("")||"";
       const parsed=parseJSON(text);
       if(parsed&&!Array.isArray(parsed)){
         setReport(parsed);
@@ -1579,21 +1550,19 @@ function AnalyzeTab({initialQuery="",onClear}){
           <div style={{fontSize:22,marginBottom:8}}>🔍</div>
           <div style={{fontWeight:600,color:C.dark,marginBottom:3}}>Analyzing {q}…</div>
           <div style={{fontSize:11,marginBottom:10}}>
-            {streamChars===0?"Scanning infrastructure, news signals & economic data":
-             streamChars<800?"Reading growth signals…":
-             streamChars<2000?"Compiling civic & traffic intelligence…":
-             streamChars<3200?"Building price history & forecasts…":
-             "Finalizing report…"}
+            {streamChars<3000?"Scanning infrastructure, news signals & economic data":
+             streamChars<9000?"Reading growth signals…":
+             streamChars<18000?"Compiling civic & traffic intelligence…":
+             "Building price history & forecasts…"}
           </div>
-          {/* Live progress bar — fills toward a rough expected length since the
-              response size is a large structured JSON, not a fixed-size answer.
-              This gives real visual feedback as text streams in, instead of a
-              spinner with zero indication of progress. */}
-          <div style={{width:"100%",maxWidth:220,height:5,background:C.border,borderRadius:3,margin:"0 auto",overflow:"hidden"}}>
-            <div style={{height:"100%",background:C.blue,borderRadius:3,transition:"width 0.2s ease-out",
-              width:Math.min(96,(streamChars/3800)*100)+"%"}}/>
+          {/* Indeterminate progress animation — we don't have real byte-level
+              feedback from the API (non-streaming request), so this is an
+              honest "still working" indicator rather than a precise percentage. */}
+          <div style={{width:"100%",maxWidth:220,height:5,background:C.border,borderRadius:3,margin:"0 auto",overflow:"hidden",position:"relative"}}>
+            <div style={{position:"absolute",height:"100%",width:"40%",background:C.blue,borderRadius:3,
+              animation:"indeterminate 1.4s ease-in-out infinite"}}/>
           </div>
-          {streamChars>0&&<div style={{fontSize:10,color:C.muted,marginTop:6}}>{streamChars.toLocaleString()} characters received</div>}
+          <style>{`@keyframes indeterminate{0%{left:-40%}100%{left:100%}}`}</style>
         </div>
       )}
       {error&&<div style={{color:C.red,fontFamily:"Inter,sans-serif",fontSize:11,padding:"9px 13px",background:"#FFF5F5",borderRadius:8,wordBreak:"break-all"}}>{error}</div>}
@@ -3288,7 +3257,46 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
 
 
 
-export default function App(){
+// ── Error boundary — without this, ANY render error anywhere in the tree
+// (a bad prop, an undefined access, a third-party library throwing) silently
+// blanks the entire page with zero visible explanation. This catches that
+// and shows what actually broke instead of a dead page.
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error("App crashed:", error, info); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
+          background: C.bg, padding: 24, fontFamily: "Inter,sans-serif" }}>
+          <div style={{ maxWidth: 480, background: "#fff", borderRadius: 12, border: "1px solid " + C.border,
+            padding: 24, textAlign: "center" }}>
+            <div style={{ fontSize: 32, marginBottom: 10 }}>⚠️</div>
+            <div style={{ fontWeight: 700, fontSize: 15, color: C.dark, marginBottom: 8 }}>Something went wrong</div>
+            <div style={{ fontSize: 12, color: C.muted, marginBottom: 14, lineHeight: 1.6 }}>
+              The app hit an unexpected error and couldn't render. This is usually a missing or
+              misconfigured environment variable, or a temporary issue — reloading often fixes it.
+            </div>
+            <div style={{ fontSize: 10, color: "#C84B31", background: "#FFF5F5", borderRadius: 6,
+              padding: "8px 10px", marginBottom: 14, textAlign: "left", fontFamily: "monospace",
+              wordBreak: "break-word", maxHeight: 120, overflow: "auto" }}>
+              {String(this.state.error?.message || this.state.error)}
+            </div>
+            <button onClick={() => window.location.reload()} style={{ background: C.navy, color: "#fff",
+              border: "none", borderRadius: 8, padding: "9px 18px", fontFamily: "Inter,sans-serif",
+              fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+              Reload page
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function AppInner(){
   const [tab,setTab]=useState("home");
   const [analyzeQuery,setAnalyzeQuery]=useState("");
 
@@ -3328,5 +3336,13 @@ export default function App(){
         AI-generated analysis · Not financial advice · Verify before investing
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppInner />
+    </ErrorBoundary>
   );
 }
