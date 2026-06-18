@@ -1578,57 +1578,93 @@ function AnalyzeTab({initialQuery="",onClear}){
 }
 
 function HomeTab({onStateSelect,onNavigate}){
-  return(
-    <div style={{display:"flex",flexDirection:"column",gap:14}}>
-      <div style={{background:C.navy,borderRadius:12,padding:"16px 18px"}}>
-        <div style={{color:"#F8FAFB",fontFamily:"serif",fontSize:17,marginBottom:3}}>India Land Investment Intelligence</div>
-        <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:12}}>Three tools below, or just tap a state on the map</div>
+  const [view,setView]=useState("search"); // "search" (default landing) or "map" (opened via link below)
+  const [q,setQ]=useState("");
+
+  const goAnalyze=(loc)=>{
+    if(!loc.trim()) return;
+    onStateSelect(loc.trim()); // re-uses the existing handleStateClick flow: sets analyzeQuery + switches tab
+  };
+
+  if(view==="map"){
+    return(
+      <div style={{display:"flex",flexDirection:"column",gap:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontFamily:"serif",fontSize:16,color:C.dark}}>Browse by state</div>
+          <button onClick={()=>setView("search")} style={{background:"none",border:"none",color:C.blue,
+            cursor:"pointer",fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600}}>← Back to search</button>
+        </div>
+        <MapView onStateClick={onStateSelect} height={420}/>
+        <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,textAlign:"center"}}>
+          ☝️ Click any state · Hover to preview growth score · Green = high growth opportunity
+        </div>
       </div>
-      {/* Feature entry cards — surfaced above the map so Analyze/Screener/Pricer
-          aren't hidden behind small header tabs that get missed on mobile */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:8}}>
+    );
+  }
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:0}}>
+      {/* Search-first hero — replaces the map as the landing focus. The map
+          was the first thing people saw before, with no clear next action;
+          this leads with the one question the app actually answers. */}
+      <div style={{background:"linear-gradient(180deg,#0F1B2D,#16243A)",borderRadius:14,
+        padding:"30px 18px 24px",textAlign:"center",marginBottom:18}}>
+        <div style={{color:"#F8FAFB",fontFamily:"serif",fontSize:19,lineHeight:1.35,marginBottom:7}}>
+          Where are you<br/>looking to invest?
+        </div>
+        <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:12,marginBottom:18}}>
+          Type any locality in India to get a growth score
+        </div>
+        <div style={{background:"#fff",borderRadius:12,padding:5,display:"flex",gap:5,
+          boxShadow:"0 8px 22px rgba(0,0,0,0.25)"}}>
+          <input value={q} onChange={e=>setQ(e.target.value)}
+            onKeyDown={e=>{if(e.key==="Enter") goAnalyze(q);}}
+            placeholder="Whitefield, Bengaluru"
+            style={{flex:1,border:"none",outline:"none",padding:"10px 11px",fontSize:13,
+              color:C.dark,fontFamily:"Inter,sans-serif",borderRadius:8}}/>
+          <button onClick={()=>goAnalyze(q)} style={{background:C.navy,color:"#fff",border:"none",
+            borderRadius:8,padding:"0 15px",fontSize:12.5,fontWeight:700,cursor:"pointer",
+            fontFamily:"Inter,sans-serif",whiteSpace:"nowrap"}}>Analyze →</button>
+        </div>
+        <div style={{display:"flex",gap:5,marginTop:10,flexWrap:"wrap",justifyContent:"center"}}>
+          {["Dholera, Gujarat","Aerocity, Delhi","Sarjapur, Bengaluru"].map(s=>(
+            <button key={s} onClick={()=>goAnalyze(s)} style={{background:"rgba(255,255,255,0.1)",
+              color:"#CBD5E1",fontSize:10.5,padding:"4px 10px",borderRadius:13,
+              border:"1px solid rgba(255,255,255,0.15)",cursor:"pointer",fontFamily:"Inter,sans-serif"}}>{s}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Secondary tools — present but visually quiet, since search is the
+          primary path now and these are alternate entry points. */}
+      <div style={{fontFamily:"Inter,sans-serif",fontSize:10.5,fontWeight:700,color:C.muted,
+        textTransform:"uppercase",letterSpacing:0.4,marginBottom:9}}>Or use a different tool</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:8,marginBottom:18}}>
         {[
-          {tab:"analyze",icon:"🔍",title:"Analyze",desc:"Score any locality"},
           {tab:"screen",icon:"🎯",title:"Screener",desc:"Find opportunities"},
-          {tab:"pricer",icon:"🏘️",title:"Pricer",desc:"Price a property"},
+          {tab:"pricer",icon:"🏘️",title:"Pricer",desc:"Value a property"},
         ].map(f=>(
           <button key={f.tab} onClick={()=>onNavigate(f.tab)}
-            style={{background:"#fff",border:"1px solid "+C.border,borderRadius:10,
+            style={{background:C.bg,border:"1px solid "+C.border,borderRadius:10,
               padding:"12px 8px",cursor:"pointer",textAlign:"center",
               display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-            <span style={{fontSize:22}}>{f.icon}</span>
-            <span style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:C.dark}}>{f.title}</span>
-            <span style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted}}>{f.desc}</span>
+            <span style={{fontSize:18}}>{f.icon}</span>
+            <span style={{fontFamily:"serif",fontSize:11.5,color:C.dark}}>{f.title}</span>
+            <span style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>{f.desc}</span>
           </button>
         ))}
+        <button onClick={()=>setView("map")}
+          style={{background:C.bg,border:"1px solid "+C.border,borderRadius:10,
+            padding:"12px 8px",cursor:"pointer",textAlign:"center",
+            display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+          <span style={{fontSize:18}}>🗺️</span>
+          <span style={{fontFamily:"serif",fontSize:11.5,color:C.dark}}>Map</span>
+          <span style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>Browse states</span>
+        </button>
       </div>
-      <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,textAlign:"center",marginTop:-6}}>
-        — or explore the map —
-      </div>
-      <MapView onStateClick={onStateSelect} height={360}/>
-      <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,textAlign:"center"}}>
-        ☝️ Click any state · Hover to preview growth score · Green = high growth opportunity
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:9}}>
-        {[
-          {state:"Gujarat",score:85,note:"Dholera SIR + GIFT City + DMIC — rare trifecta"},
-          {state:"Karnataka",score:82,note:"Bengaluru Metro Zone 3 + KIADB industrial parks"},
-          {state:"Tamil Nadu",score:78,note:"Chennai-Bengaluru industrial corridor + ports"},
-          {state:"Haryana",score:70,note:"NCR expansion belt + KMP expressway zone"},
-        ].map(x=>(
-          <button key={x.state} onClick={()=>onStateSelect(x.state)}
-            style={{background:"#fff",border:`1px solid ${C.border}`,borderRadius:10,padding:"11px 13px",cursor:"pointer",textAlign:"left",transition:"border-color 0.2s"}}
-            onMouseOver={e=>e.currentTarget.style.borderColor=C.blue}
-            onMouseOut={e=>e.currentTarget.style.borderColor=C.border}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
-              <div style={{fontFamily:"serif",fontSize:14,color:C.dark}}>{x.state}</div>
-              <div style={{background:scoreColor(x.score),color:"#fff",borderRadius:5,padding:"2px 7px",fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:11}}>{x.score}</div>
-            </div>
-            <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,lineHeight:1.5}}>{x.note}</div>
-          </button>
-        ))}
-      </div>
-      <div style={{background:"#FFFBEB",borderRadius:9,border:`1px solid #FDE68A`,padding:"11px 13px",fontFamily:"Inter,sans-serif",fontSize:12,color:"#92400E"}}>
+
+      <div style={{background:"#FFFBEB",borderRadius:9,border:`1px solid #FDE68A`,padding:"11px 13px",
+        fontFamily:"Inter,sans-serif",fontSize:12,color:"#92400E"}}>
         🔮 <strong>Top pick right now:</strong> Gujarat (Score 85) — Dholera Smart City + semiconductor fab zone + DMIC corridor = rare convergence of three major catalysts.
       </div>
     </div>
@@ -3314,7 +3350,7 @@ function AppInner(){
           <span style={{color:"#F8FAFB",fontFamily:"serif",fontSize:14,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>Bharat Land Intelligence</span>
         </div>
         <div style={{background:"#1E293B",display:"flex",gap:0,padding:"3px 6px 5px"}}>
-          {[["home","🗺️","Map"],["analyze","🔍","Analyze"],["screen","🎯","Screener"],["pricer","🏘️","Pricer"]].map(([k,icon,l])=>(
+          {[["home","🏠","Home"],["analyze","🔍","Analyze"],["screen","🎯","Screener"],["pricer","🏘️","Pricer"]].map(([k,icon,l])=>(
             <button key={k} onClick={()=>setTab(k)}
               style={{flex:1,minWidth:0,background:tab===k?C.blue:"transparent",color:tab===k?"#fff":"#94A3B8",
                 border:"none",borderRadius:6,padding:"7px 4px",fontFamily:"Inter,sans-serif",fontWeight:600,
