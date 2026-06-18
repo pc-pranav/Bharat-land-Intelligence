@@ -193,24 +193,33 @@ function isOutlier(newValue, existingValues) {
 
 const KARNATAKA_INFRA = {
   metro: {
-    source: "BMRCL public announcements, Deccan Herald, PMIndia.gov.in (cited mid-2025 to early 2026)",
+    source: "BMRCL public announcements, Wikipedia (Namma Metro), themetrorailguy.com, Deccan Herald (cited mid-2025 to mid-2026)",
     asOf: "2026-06",
     lines: [
-      {name:"Purple Line", status:"operational", note:"Original line, Whitefield–Challaghatta corridor"},
-      {name:"Green Line", status:"operational", note:"Nagasandra–Silk Institute corridor"},
-      {name:"Yellow Line", status:"partial operational", note:"RV Road–Bommasandra, opened in phases"},
+      {name:"Purple Line", status:"operational", note:"Whitefield (Kadugodi)–Challaghatta corridor, via Majestic, MG Road, Indiranagar",
+        corridor:["whitefield","kadugodi","majestic","mg road","indiranagar","baiyappanahalli","kengeri","challaghatta"]},
+      {name:"Green Line", status:"operational", note:"Madavara–Silk Institute corridor via Majestic and Kanakapura Road (Yelachenahalli, Konanakunte, Talaghattapura, Silk Institute) — the line directly serving South Bengaluru's Kanakapura Road belt",
+        corridor:["kanakapura","yelachenahalli","konanakunte","talaghattapura","banashankari","jayanagar","basavanagudi","silk institute","nagasandra","peenya","yeshwanthpur","madavara","tumkur road","kaggalipura","harohalli","anjanapura","uttarahalli","subramanyapura","vajarahalli"]},
+      {name:"Yellow Line", status:"operational", note:"RV Road–Bommasandra, fully operational since Aug 2025 inauguration (no longer phased)",
+        corridor:["btm layout","silk board","electronic city","bommasandra","jayanagar","ragigudda","hosur road","bommanahalli"]},
       {name:"Pink Line", status:"under construction", length_km:21.25, stations:18,
-        note:"Nagawara–Kalena Agrahara, phased opening targeted 2026, has slipped before"},
+        note:"Kalena Agrahara–Nagawara, phased opening targeted 2026, has slipped before",
+        corridor:["kalena agrahara","gottigere","jayadeva","nagawara","cantonment","jp nagar 4th phase"]},
       {name:"Blue Line Phase 2A", status:"under construction", length_km:19.75,
-        note:"Silk Board–KR Puram, repeatedly delayed, latest target mid-2025/2026"},
+        note:"Silk Board–KR Puram, repeatedly delayed, latest target mid-2026",
+        corridor:["silk board","krishnarajapura","kr puram","marathahalli","ecospace"]},
       {name:"Blue Line Phase 2B", status:"under construction", length_km:38.44,
-        note:"KR Puram–Airport, pushed to early 2027"},
-      {name:"Phase 3 Corridor 1", status:"approved, early construction", length_km:32.15, stations:22,
-        note:"JP Nagar 4th Phase–Kempapura via ORR West, Cabinet approved Aug 2024, target 2028 (officials express doubt on this date)"},
-      {name:"Phase 3 Corridor 2", status:"approved, early construction", length_km:12.5, stations:9,
-        note:"Hosahalli–Kadabagere via Magadi Road, same approval/timeline as Corridor 1"},
+        note:"KR Puram–Airport via Hebbal and Yelahanka, pushed to end-2026",
+        corridor:["kr puram","hebbal","yelahanka","airport","kempegowda international"]},
+      {name:"Orange Line Corridor 1", status:"pre-construction (land acquisition stage)", length_km:32.15, stations:22,
+        note:"JP Nagar 4th Phase–Kempapura via western ORR (Banashankari, Mysuru Road, Nagarbhavi, Peenya, Hebbal), Cabinet approved Aug 2024, target ~2029 (officials express doubt on this date) — relevant to JP Nagar/Kanakapura Road area, not yet to outer Kanakapura Road stretches like Kaggalipura",
+        corridor:["jp nagar","mysuru road","nagarbhavi","sumanahalli","peenya","hebbal","kempapura","banashankari","kanakapura"]},
+      {name:"Orange Line Corridor 2", status:"pre-construction (land acquisition stage)", length_km:12.5, stations:9,
+        note:"Hosahalli–Kadabagere via Magadi Road, same approval/timeline as Corridor 1",
+        corridor:["hosahalli","kadabagere","magadi road","byadarahalli","herohalli"]},
     ],
     networkAtPhase3Completion_km: 220.20,
+    plannedNotOperational:["Phase 4 (Hoskote, Bidadi, Harohalli, Tumkur extensions) is still at the proposal stage with no approved timeline — do not treat as committed."],
   },
   masterPlan: {
     source: "BDA Revised Master Plan (RMP) 2031, official volumes",
@@ -231,11 +240,29 @@ const KARNATAKA_INFRA = {
 // each metro alignment, which isn't available as open data either).
 function getKarnatakaInfraContext(localityName, notes) {
   const text = ((localityName||"") + " " + (notes||"")).toLowerCase();
-  const underConstructionLines = KARNATAKA_INFRA.metro.lines.filter(l=>l.status.includes("construction"));
-  const operationalLines = KARNATAKA_INFRA.metro.lines.filter(l=>l.status==="operational"||l.status.includes("partial"));
+
+  // Real relevance: does the locality text mention any keyword from a line's
+  // known corridor (areas/stations it actually passes through)? This is the
+  // fix for showing irrelevant lines — e.g. Kaggalipura (Kanakapura Road)
+  // should match Green Line and Orange Line, not Purple/Pink/Blue, which run
+  // through entirely different parts of the city. Falls back to the line's
+  // own color/distinguishing name word (e.g. "purple", "green") as a keyword
+  // too, in case someone types the line name directly — but excludes generic
+  // words ("line", "phase", "corridor") that would otherwise match everything.
+  const GENERIC_WORDS = new Set(["line","phase","corridor","metro"]);
+  const relevantLines = KARNATAKA_INFRA.metro.lines.filter(l=>{
+    const nameWords = l.name.toLowerCase().split(" ").filter(w=>w.length>3 && !GENERIC_WORDS.has(w));
+    const keywords = [...(l.corridor||[]), ...nameWords];
+    return keywords.some(kw=>text.includes(kw));
+  });
+
+  const underConstructionLines = relevantLines.filter(l=>l.status.includes("construction"));
+  const operationalLines = relevantLines.filter(l=>l.status==="operational");
+
   return {
-    metro_operational: operationalLines.some(l=>text.includes(l.name.toLowerCase().split(" ")[0])),
-    metro_under_construction: underConstructionLines.some(l=>text.includes(l.name.toLowerCase().split(" ")[0])),
+    relevantLines, // the lines to actually display for this locality — empty array if none are geographically relevant
+    metro_operational: operationalLines.length>0,
+    metro_under_construction: underConstructionLines.length>0,
     source: KARNATAKA_INFRA.metro.source,
     asOf: KARNATAKA_INFRA.metro.asOf,
   };
@@ -968,29 +995,49 @@ function ProvenanceBadge({type}){
 // localities, since this is the only state with curated, cited data so far.
 function KarnatakaInfraCard({locationName, locationNotes}){
   const ctx = getKarnatakaInfraContext(locationName, locationNotes);
+  const [showAll, setShowAll] = useState(false);
+  const linesToShow = showAll ? KARNATAKA_INFRA.metro.lines : ctx.relevantLines;
+
   return(
     <div style={{background:"#fff",borderRadius:10,border:"1px solid "+C.border,padding:"13px"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
         <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.dark}}>🚇 Karnataka Infrastructure Pipeline</div>
         <ProvenanceBadge type="cited"/>
       </div>
-      <div style={{display:"flex",flexDirection:"column",gap:6}}>
-        {KARNATAKA_INFRA.metro.lines.map(line=>(
-          <div key={line.name} style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",
-            padding:"6px 0",borderBottom:"1px solid "+C.border,gap:8}}>
-            <div style={{flex:1}}>
-              <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,color:C.dark}}>{line.name}</div>
-              <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,marginTop:1,lineHeight:1.4}}>{line.note}</div>
+      {ctx.relevantLines.length===0 && !showAll ? (
+        <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,lineHeight:1.5,padding:"4px 0 8px"}}>
+          No metro line in our curated dataset directly serves this specific locality yet. This doesn't mean nothing is planned nearby — just that we don't have a confirmed, named line for this exact spot.
+          {" "}<button onClick={()=>setShowAll(true)} style={{background:"none",border:"none",color:C.blue,
+            fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,cursor:"pointer",padding:0,textDecoration:"underline"}}>
+            View full citywide pipeline instead
+          </button>
+        </div>
+      ) : (
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          {linesToShow.map(line=>(
+            <div key={line.name} style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",
+              padding:"6px 0",borderBottom:"1px solid "+C.border,gap:8}}>
+              <div style={{flex:1}}>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,color:C.dark}}>{line.name}</div>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,marginTop:1,lineHeight:1.4}}>{line.note}</div>
+              </div>
+              <span style={{flexShrink:0,fontFamily:"Inter,sans-serif",fontSize:9,fontWeight:600,
+                padding:"2px 7px",borderRadius:10,
+                background:line.status==="operational"?"#F0FDF4":line.status.includes("construction")?"#FFFBEB":"#F1F5F9",
+                color:line.status==="operational"?"#15803D":line.status.includes("construction")?"#92400E":C.muted}}>
+                {line.status}
+              </span>
             </div>
-            <span style={{flexShrink:0,fontFamily:"Inter,sans-serif",fontSize:9,fontWeight:600,
-              padding:"2px 7px",borderRadius:10,
-              background:line.status==="operational"?"#F0FDF4":line.status.includes("partial")?"#EFF6FF":"#FFFBEB",
-              color:line.status==="operational"?"#15803D":line.status.includes("partial")?"#1D4ED8":"#92400E"}}>
-              {line.status}
-            </span>
-          </div>
-        ))}
-      </div>
+          ))}
+          {showAll && (
+            <button onClick={()=>setShowAll(false)} style={{background:"none",border:"none",color:C.blue,
+              fontFamily:"Inter,sans-serif",fontSize:10.5,fontWeight:600,cursor:"pointer",padding:"4px 0",
+              textAlign:"left",textDecoration:"underline"}}>
+              ← Show only lines relevant to this locality
+            </button>
+          )}
+        </div>
+      )}
       <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,marginTop:8,fontStyle:"italic"}}>
         Source: {KARNATAKA_INFRA.metro.source}. Snapshot as of {KARNATAKA_INFRA.metro.asOf} — Indian metro timelines have a track record of slipping; treat target dates as directional.
       </div>
@@ -1060,7 +1107,8 @@ function ReportCard({data,pins}){
           {SCORES.map(s=><Ring key={s.k} score={data[s.k]||0} label={s.l}/>)}
         </div>
       </div>
-      {isKarnataka && <KarnatakaInfraCard locationName={data.location_name} locationNotes={data.locality_insight}/>}
+      {isKarnataka && <KarnatakaInfraCard locationName={data.location_name}
+        locationNotes={[data.locality_insight, data.investment_thesis, ...(data.growth_drivers||[])].filter(Boolean).join(" ")}/>}
       {data.news_signals&&<NewsSignals signals={data.news_signals}/>}
       {data.sentiment_score!=null&&<Sentiment score={data.sentiment_score} label={data.sentiment_summary}/>}
       {/* Future Price Forecast Chart */}
