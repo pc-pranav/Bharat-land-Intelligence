@@ -803,6 +803,11 @@ function IndiaMap({pins=[],onStateClick,selectedState=null,focusLat=null,focusLn
 function MapView(props) {
   const apiKey = typeof import.meta !== "undefined" ? import.meta.env?.VITE_GOOGLE_MAPS_API_KEY : null;
   const [useGoogle, setUseGoogle] = useState(!!apiKey);
+  // Always supply the state-growth and region-cluster data so the color
+  // coding works on Google Maps too, without every call site needing to
+  // remember to pass it. GoogleMapView ignores these if not relevant (e.g.
+  // a focused single-location view from Analyze/Screener still works as before).
+  const mapProps = { stateGrowth: STATE_GROWTH, regionClusters: REGION_CLUSTERS, ...props };
 
   if (!apiKey) return <IndiaMap {...props} />;
 
@@ -820,7 +825,7 @@ function MapView(props) {
           </button>
         ))}
       </div>
-      {useGoogle ? <GoogleMapView {...props} /> : <IndiaMap {...props} />}
+      {useGoogle ? <GoogleMapView {...mapProps} /> : <IndiaMap {...props} />}
     </div>
   );
 }
@@ -1474,19 +1479,64 @@ function AnalyzeTab({initialQuery="",onClear}){
     if(initialQuery&&!ranOnce.current){ranOnce.current=true;setQ(initialQuery);doAnalyze(initialQuery);}
   },[initialQuery]);
 
+  const [streamChars,setStreamChars]=useState(0);
+
   const doAnalyze=async(query)=>{
     const loc=(query||q).trim();
     if(!loc) return;
-    setLoading(true);setReport(null);setError("");setPins([]);
+    setLoading(true);setReport(null);setError("");setPins([]);setStreamChars(0);
     try{
       const cacheKey="analyze_"+loc.toLowerCase().trim().replace(/[^a-z0-9]+/g,"_");
       const res=await fetch(API_ENDPOINT,{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:8000,system:SYS,messages:[{role:"user",content:`Analyze for land investment: ${loc}, India`}],cacheKey,cacheType:"analyze"}),
+        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:8000,system:SYS,
+          messages:[{role:"user",content:`Analyze for land investment: ${loc}, India`}],
+          cacheKey,cacheType:"analyze",stream:true}),
       });
-      const d=await res.json();
-      if(d.error){setError("API: "+d.error.message);setLoading(false);return;}
-      const text=d.content?.map(b=>b.text||"").join("")||"";
+
+      if(!res.ok || !res.body){
+        // Fallback: try reading as plain JSON in case this was a cache-hit
+        // response (the proxy always returns those as plain JSON, not a stream).
+        const d=await res.json().catch(()=>null);
+        if(d?.error){setError("API: "+d.error.message);setLoading(false);return;}
+        setError("Request failed.");setLoading(false);return;
+      }
+
+      const contentType=res.headers.get("content-type")||"";
+      let text="";
+
+      if(contentType.includes("application/json")){
+        // Cache hit — proxy returned a complete plain JSON response, not a stream.
+        const d=await res.json();
+        if(d.error){setError("API: "+d.error.message);setLoading(false);return;}
+        text=d.content?.map(b=>b.text||"").join("")||"";
+      } else {
+        // Real stream — read incrementally and show live progress as text arrives.
+        const reader=res.body.getReader();
+        const decoder=new TextDecoder();
+        let buffer="";
+        while(true){
+          const {done,value}=await reader.read();
+          if(done) break;
+          buffer+=decoder.decode(value,{stream:true});
+          const lines=buffer.split("\n");
+          buffer=lines.pop();
+          for(const line of lines){
+            if(!line.startsWith("data: ")) continue;
+            try{
+              const evt=JSON.parse(line.slice(6));
+              if(evt.type==="content_block_delta" && evt.delta?.text){
+                text+=evt.delta.text;
+                setStreamChars(text.length);
+              }
+              if(evt.type==="error"){
+                setError("API: "+(evt.error?.message||"stream error"));
+              }
+            }catch{ /* incomplete fragment, next chunk completes it */ }
+          }
+        }
+      }
+
       const parsed=parseJSON(text);
       if(parsed&&!Array.isArray(parsed)){
         setReport(parsed);
@@ -1528,7 +1578,22 @@ function AnalyzeTab({initialQuery="",onClear}){
         <div style={{textAlign:"center",padding:"34px 20px",fontFamily:"Inter,sans-serif",color:C.muted,fontSize:13}}>
           <div style={{fontSize:22,marginBottom:8}}>🔍</div>
           <div style={{fontWeight:600,color:C.dark,marginBottom:3}}>Analyzing {q}…</div>
-          <div style={{fontSize:11}}>Scanning infrastructure, news signals & economic data</div>
+          <div style={{fontSize:11,marginBottom:10}}>
+            {streamChars===0?"Scanning infrastructure, news signals & economic data":
+             streamChars<800?"Reading growth signals…":
+             streamChars<2000?"Compiling civic & traffic intelligence…":
+             streamChars<3200?"Building price history & forecasts…":
+             "Finalizing report…"}
+          </div>
+          {/* Live progress bar — fills toward a rough expected length since the
+              response size is a large structured JSON, not a fixed-size answer.
+              This gives real visual feedback as text streams in, instead of a
+              spinner with zero indication of progress. */}
+          <div style={{width:"100%",maxWidth:220,height:5,background:C.border,borderRadius:3,margin:"0 auto",overflow:"hidden"}}>
+            <div style={{height:"100%",background:C.blue,borderRadius:3,transition:"width 0.2s ease-out",
+              width:Math.min(96,(streamChars/3800)*100)+"%"}}/>
+          </div>
+          {streamChars>0&&<div style={{fontSize:10,color:C.muted,marginTop:6}}>{streamChars.toLocaleString()} characters received</div>}
         </div>
       )}
       {error&&<div style={{color:C.red,fontFamily:"Inter,sans-serif",fontSize:11,padding:"9px 13px",background:"#FFF5F5",borderRadius:8,wordBreak:"break-all"}}>{error}</div>}
