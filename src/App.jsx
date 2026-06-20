@@ -1473,11 +1473,29 @@ Today's date is ${new Date().toLocaleDateString('en-IN',{day:'numeric',month:'lo
 
 Analyze the given Indian location. Return ONLY a raw JSON object starting with { and ending with }. No markdown, no fences.
 
-PRICING ACCURACY IS CRITICAL: current_land_price and all forecast prices MUST reflect REAL market rates for this SPECIFIC locality, not generic city-wide averages. A prime micro-market (e.g. Whitefield, Koramangala) commands very different pricing than an outer/emerging area of the same city. Use your knowledge of actual recent transaction ranges, builder pricing, and government guidance value (where relevant) for this exact locality. If you are not confident about a hyper-local area, say so in locality_insight and give your best realistic estimate based on the nearest known reference point, rather than defaulting to a round generic number.
+PRICING ACCURACY IS CRITICAL: current_land_price MUST follow this EXACT format: "₹[MIN]–[MAX]/sqft" (e.g. "₹12,000–22,000/sqft"). Use the reference anchors below — these are curated from Magicbricks/99acres/JLL India/NoBroker research (mid-2026). You MUST use the exact min–max from the anchor table when the locality matches. Do NOT reformat, do NOT change the range, do NOT add extra text to the price field itself (save commentary for locality_insight instead).
+
+PRICE REFERENCE ANCHORS — use the EXACT range as written:
+Whitefield/ITPL belt (Bengaluru): ₹12,000–22,000/sqft | Sarjapur Road (Bengaluru): ₹8,000–16,000/sqft | Koramangala (Bengaluru): ₹25,000–50,000/sqft | Devanahalli/Airport (Bengaluru): ₹4,000–9,000/sqft | Electronic City (Bengaluru): ₹5,000–10,000/sqft | HSR Layout (Bengaluru): ₹20,000–40,000/sqft | JP Nagar (Bengaluru): ₹12,000–22,000/sqft | Yelahanka (Bengaluru): ₹5,000–10,000/sqft | Hebbal (Bengaluru): ₹12,000–22,000/sqft | Kanakapura Road outer (Bengaluru): ₹3,000–7,000/sqft | Kaggalipura/periphery (Bengaluru): ₹2,500–5,500/sqft | Hinjewadi/Wakad (Pune): ₹6,000–14,000/sqft | Navi Mumbai: ₹8,000–18,000/sqft | Thane: ₹9,000–18,000/sqft | OMR Corridor (Chennai): ₹5,000–12,000/sqft | Porur/Poonamallee (Chennai): ₹6,000–13,000/sqft | Tambaram (Chennai): ₹3,500–8,000/sqft | Gachibowli/HITEC City (Hyderabad): ₹15,000–35,000/sqft | Kompally/Medchal (Hyderabad): ₹5,000–10,000/sqft | Shamshabad (Hyderabad): ₹3,500–8,000/sqft | Dholera SIR (Gujarat): ₹1,500–6,000/sqft | Ahmedabad metro: ₹3,000–12,000/sqft | Surat: ₹3,500–9,000/sqft | Gurugram (DLF/Golf Course): ₹15,000–50,000/sqft | Noida: ₹5,000–20,000/sqft | Greater Noida: ₹3,000–8,000/sqft
+
+For localities NOT in this table: use your best knowledge but flag confidence_level as "Low" or "Medium" and avoid round numbers (use a specific range like ₹4,800–9,200/sqft).
+
+SCORING ANCHORS — for these localities, use these sub-scores as your FIXED baseline. Only deviate if you have a specific, named, verifiable recent fact that genuinely changes a score, and explain it in locality_insight:
+Whitefield (Bengaluru): infrastructure:78, population:72, economic:88, connectivity:74, urban_expansion:68, market_momentum:82, scarcity:70, risk:35, catalyst:68
+Sarjapur Road (Bengaluru): infrastructure:70, population:75, economic:78, connectivity:68, urban_expansion:80, market_momentum:76, scarcity:72, risk:38, catalyst:72
+Electronic City (Bengaluru): infrastructure:72, population:68, economic:82, connectivity:65, urban_expansion:62, market_momentum:70, scarcity:65, risk:32, catalyst:60
+Devanahalli (Bengaluru): infrastructure:75, population:55, economic:70, connectivity:68, urban_expansion:85, market_momentum:78, scarcity:60, risk:42, catalyst:82
+Kanakapura Road (Bengaluru): infrastructure:55, population:58, economic:52, connectivity:54, urban_expansion:72, market_momentum:62, scarcity:68, risk:45, catalyst:65
+HSR Layout (Bengaluru): infrastructure:76, population:80, economic:85, connectivity:78, urban_expansion:50, market_momentum:72, scarcity:82, risk:28, catalyst:58
+Gachibowli (Hyderabad): infrastructure:80, population:78, economic:88, connectivity:76, urban_expansion:70, market_momentum:82, scarcity:68, risk:30, catalyst:72
+Hinjewadi (Pune): infrastructure:72, population:70, economic:80, connectivity:68, urban_expansion:75, market_momentum:74, scarcity:65, risk:35, catalyst:68
+Dholera (Gujarat): infrastructure:60, population:30, economic:65, connectivity:55, urban_expansion:90, market_momentum:72, scarcity:40, risk:55, catalyst:90
+
+SCORING CONSISTENCY: For ALL other localities not in the anchor table above — before assigning any sub-score, state the specific observable fact that drives it. Each sub-score must follow directly from a named, verifiable fact. Round numbers (50, 60, 70, 80) suggest estimation — use specific integers to show actual reasoning.
 
 CRITICAL REQUIREMENTS:
-1. news_signals: Include ALL known government signals — CM/Minister/PM statements, proposed airports, metro extensions, highway approvals, budget allocations, industrial zones, court orders. MUST include any upcoming civic projects (roads, metros, parks, sewage, water supply) that will INCREASE or DECREASE the score.
-2. civic_grievances: Based on your knowledge, list REAL known grievances for this area (waterlogging, traffic, power cuts, encroachment, pollution). User may not know these.
+1. news_signals: Include ALL known government signals — CM/Minister/PM statements, proposed airports, metro extensions, highway approvals, budget allocations, industrial zones, court orders. MUST include any upcoming civic projects that will INCREASE or DECREASE the score.
+2. civic_grievances: Based on your knowledge, list REAL known grievances for this area (waterlogging, traffic, power cuts, encroachment, pollution).
 3. price_history: Provide approximate price per sqft for last 5-10 years (use realistic market knowledge).
 4. comparable_projects: Each must include a Google Maps search link in format: https://www.google.com/maps/search/PROJECT+NAME+LOCALITY+CITY
 
@@ -1491,13 +1509,14 @@ forecast_2yr, forecast_5yr, forecast_10yr, expected_cagr, confidence_level, grow
 growth_drivers (array 5 strings), major_risks (array 4 strings),
 recommendation ("Buy Now"|"Accumulate"|"Watchlist"|"Hold"|"Avoid"),
 investment_thesis (string), similar_to (string), similarity_score (string),
+locality_insight (string — REQUIRED: explain what specific facts drove your scoring, and if you deviated from any anchor table value, state exactly why),
 lat (number), lng (number), sentiment_score (int), sentiment_summary (string),
 news_signals (array 4 objects: {headline, type (BULLISH|BEARISH|CATALYST|NEUTRAL), impact, price_impact, is_upcoming_civic (boolean)}),
-comparable_projects (array of 2-3 objects: {name (string), rate_sqft (string e.g. "₹7,500/sqft"), maps_link (string — https://www.google.com/maps/search/PROJECT+NAME+LOCALITY+CITY)}),
+comparable_projects (array of 2-3 objects: {name (string), rate_sqft (string e.g. "₹7,500/sqft"), maps_link (string)}),
 civic_grievances (array of 3-5 strings — real known issues for this area),
 upcoming_civic_projects (array of 2-4 objects: {project, status, expected_completion, score_impact ("+5"|"-3" etc), price_impact}),
 price_history (array of objects: {year (int), price_sqft (int)} — last 8-10 years),
-water_quality_note (string — known water quality in this area),
+water_quality_note (string),
 traffic_intelligence (object: {
   peak_hour_congestion: "Severe/High/Moderate/Low",
   peak_hours: "e.g. 8-10am and 6-9pm",
@@ -1507,13 +1526,14 @@ traffic_intelligence (object: {
   infrastructure_vs_population: "Adequate/Strained/Overwhelmed",
   metro_bus_connectivity: "Excellent/Good/Average/Poor",
   parking_situation: "Easy/Moderate/Difficult/Very Difficult",
-  weekend_vs_weekday: string (1 sentence on how traffic differs),
-  future_relief: string (1 sentence — any upcoming road/metro projects that will ease congestion),
-  investor_impact: string (1 sentence — how traffic affects property values here)
+  weekend_vs_weekday: string (1 sentence),
+  future_relief: string (1 sentence),
+  investor_impact: string (1 sentence)
 })
 
 Scoring: Infrastructure 25%, Population 20%, Economic 20%, Connectivity 15%, Urban 10%, Momentum 5%, Scarcity 5%.
-Zones: 90-100 Mega Growth, 80-89 Emerging Hot, 65-79 Growth, 50-64 Stable, <50 High Risk.`;
+Zones: 90-100 Mega Growth, 80-89 Emerging Hot, 65-79 Growth, 50-64 Stable, <50 High Risk.
+`;
 
 function AnalyzeTab({initialQuery="",onClear}){
   const [q,setQ]=useState(initialQuery);
