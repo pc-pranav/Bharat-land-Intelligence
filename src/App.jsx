@@ -2185,7 +2185,7 @@ Each object must have: location, district, state, current_price_sqft, expected_c
       const cacheKey="screener_"+[f.city,f.radius,f.minCagr,f.maxPrice,f.minInfra,f.maxRisk].join("_").toLowerCase().replace(/[^a-z0-9_]/g,"");
       const res=await fetch(API_ENDPOINT,{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:8000,temperature:0,messages:[{role:"user",content:prompt}],cacheKey,cacheType:"screener"}),
+        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:10000,temperature:0,messages:[{role:"user",content:prompt}],cacheKey,cacheType:"screener"}),
       });
       const d=await res.json();
       if(d.error){setError("API: "+d.error.message);setLoading(false);return;}
@@ -2441,7 +2441,7 @@ function AnalyzeTab({initialQuery="",onClear}){
       const cacheKey="analyze_"+loc.toLowerCase().trim().replace(/[^a-z0-9]+/g,"_");
       const res=await fetch(API_ENDPOINT,{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:8000,temperature:0,system:SYS,
+        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:10000,temperature:0,system:SYS,
           messages:[{role:"user",content:`Analyze for land investment: ${loc}, India`}],
           cacheKey,cacheType:"analyze"}),
       });
@@ -3313,7 +3313,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
       const cacheKey="pricer_"+[locality,city,propType,isPlot?plotArea:area,isPlot?plotAreaUnit:bhk,selectedFloor,totalFloors,buildingType,developer,constructionStatus,approvalType,legalStatus,constructionQuality,amenityMode==="count"?amenityCount:selAmenities.slice().sort().join(","),carParking,waterQuality,hasLakeView,hasGardenView,hasCityView,hasDuplex].join("_").toLowerCase().replace(/[^a-z0-9_]+/g,"_");
       const res = await fetch(API_ENDPOINT, {
         method: "POST", headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({model:"claude-sonnet-4-6", max_tokens:8000, temperature:0, messages:[{role:"user",content:prompt}],cacheKey,cacheType:"pricer"}),
+        body: JSON.stringify({model:"claude-sonnet-4-6", max_tokens:10000, temperature:0, messages:[{role:"user",content:prompt}],cacheKey,cacheType:"pricer"}),
       });
       const d = await res.json();
       if (d.error) { setError("API: "+d.error.message); setLoading(false); return; }
