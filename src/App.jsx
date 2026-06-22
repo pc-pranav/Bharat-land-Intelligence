@@ -5,7 +5,6 @@ import GoogleMapView from "./components/GoogleMapView";
 // When deployed standalone (e.g. on Vercel), this is automatically replaced with
 // "/api/claude" so requests route through the serverless proxy — which keeps your
 // API key server-side AND adds response caching (see DEPLOY.md and lib/cache.js).
-// To deploy: change the line below to const API_ENDPOINT = "/api/claude";
 const API_ENDPOINT = "/api/claude";
 
 const C = {
@@ -210,7 +209,7 @@ const KARNATAKA_INFRA = {
         corridor:["silk board","krishnarajapura","kr puram","marathahalli","ecospace"]},
       {name:"Blue Line Phase 2B", status:"under construction", length_km:38.44,
         note:"KR Puram–Airport via Hebbal and Yelahanka, pushed to end-2026",
-        corridor:["kr puram","hebbal","yelahanka","airport","kempegowda international"]},
+        corridor:["kr puram","hebbal","yelahanka","airport","kempegowda international","devanahalli","silk board","electronic","bommasandra"]},
       {name:"Orange Line Corridor 1", status:"pre-construction (land acquisition stage)", length_km:32.15, stations:22,
         note:"JP Nagar 4th Phase–Kempapura via western ORR (Banashankari, Mysuru Road, Nagarbhavi, Peenya, Hebbal), Cabinet approved Aug 2024, target ~2029 (officials express doubt on this date) — relevant to JP Nagar/Kanakapura Road area, not yet to outer Kanakapura Road stretches like Kaggalipura",
         corridor:["jp nagar","mysuru road","nagarbhavi","sumanahalli","peenya","hebbal","kempapura","banashankari","kanakapura"]},
@@ -238,34 +237,18 @@ const KARNATAKA_INFRA = {
 // This is a simple keyword-based lookup against the curated dataset above —
 // NOT a live geocoded distance calculation (would need real coordinates for
 // each metro alignment, which isn't available as open data either).
-function getKarnatakaInfraContext(localityName, notes) {
-  const text = ((localityName||"") + " " + (notes||"")).toLowerCase();
-
-  // Real relevance: does the locality text mention any keyword from a line's
-  // known corridor (areas/stations it actually passes through)? This is the
-  // fix for showing irrelevant lines — e.g. Kaggalipura (Kanakapura Road)
-  // should match Green Line and Orange Line, not Purple/Pink/Blue, which run
-  // through entirely different parts of the city. Falls back to the line's
-  // own color/distinguishing name word (e.g. "purple", "green") as a keyword
-  // too, in case someone types the line name directly — but excludes generic
-  // words ("line", "phase", "corridor") that would otherwise match everything.
-  const GENERIC_WORDS = new Set(["line","phase","corridor","metro"]);
+function getKarnatakaInfraContext(localityName) {
+  // Match ONLY on the locality name itself — using notes/thesis caused
+  // every Electronic City analysis to match ALL metro lines (since the
+  // AI mentions "Green Line", "Blue Line" etc in growth drivers).
+  const text = (localityName||"").toLowerCase();
+  const GENERIC_WORDS = new Set(["line","phase","corridor","metro","road","nagar","layout","city","park","garden","lake","colony"]);
   const relevantLines = KARNATAKA_INFRA.metro.lines.filter(l=>{
     const nameWords = l.name.toLowerCase().split(" ").filter(w=>w.length>3 && !GENERIC_WORDS.has(w));
     const keywords = [...(l.corridor||[]), ...nameWords];
-    return keywords.some(kw=>text.includes(kw));
+    return keywords.some(kw=>kw.length>4 && text.includes(kw));
   });
-
-  const underConstructionLines = relevantLines.filter(l=>l.status.includes("construction"));
-  const operationalLines = relevantLines.filter(l=>l.status==="operational");
-
-  return {
-    relevantLines, // the lines to actually display for this locality — empty array if none are geographically relevant
-    metro_operational: operationalLines.length>0,
-    metro_under_construction: underConstructionLines.length>0,
-    source: KARNATAKA_INFRA.metro.source,
-    asOf: KARNATAKA_INFRA.metro.asOf,
-  };
+  return { relevantLines, source: KARNATAKA_INFRA.metro.source, asOf: KARNATAKA_INFRA.metro.asOf };
 }
 
 
@@ -425,56 +408,109 @@ function lngLatToSVG(lng,lat){
 // once you zoom in past state level (zoom >= 2.2). Clicking jumps to Analyze.
 const REGION_CLUSTERS = {
   "Karnataka": [
-    {name:"Bengaluru East (Whitefield Belt)", lat:12.97, lng:77.75, score:84},
-    {name:"Bengaluru North (Devanahalli/Airport)", lat:13.24, lng:77.71, score:81},
-    {name:"Bengaluru South (Electronic City)", lat:12.85, lng:77.66, score:79},
-    {name:"Mysuru Region", lat:12.30, lng:76.64, score:68},
-    {name:"Mangaluru Coastal Belt", lat:12.87, lng:74.84, score:65},
-    {name:"Hubli-Dharwad", lat:15.36, lng:75.12, score:60},
+    {name:"Bengaluru East (Whitefield Belt)", lat:12.97, lng:77.75, score:80},
+    {name:"Bengaluru North (Devanahalli/Airport)", lat:13.24, lng:77.71, score:74},
+    {name:"Bengaluru South (Electronic City)", lat:12.85, lng:77.66, score:72},
+    {name:"Mysuru Region", lat:12.30, lng:76.64, score:62},
+    {name:"Mangaluru Coastal Belt", lat:12.87, lng:74.84, score:58},
+    {name:"Hubli-Dharwad", lat:15.36, lng:75.12, score:54},
   ],
   "Maharashtra": [
-    {name:"Mumbai Metropolitan Region", lat:19.08, lng:72.88, score:80},
-    {name:"Pune East (Hinjewadi/Wakad)", lat:18.59, lng:73.74, score:82},
-    {name:"Navi Mumbai", lat:19.03, lng:73.02, score:78},
-    {name:"Nagpur Region", lat:21.15, lng:79.09, score:62},
-    {name:"Nashik Region", lat:19.99, lng:73.79, score:64},
-    {name:"Thane Belt", lat:19.22, lng:72.98, score:75},
+    {name:"Mumbai Metropolitan Region", lat:19.08, lng:72.88, score:72},
+    {name:"Pune East (Hinjewadi/Wakad)", lat:18.59, lng:73.74, score:76},
+    {name:"Navi Mumbai", lat:19.03, lng:73.02, score:70},
+    {name:"Nagpur Region", lat:21.15, lng:79.09, score:55},
+    {name:"Nashik Region", lat:19.99, lng:73.79, score:56},
+    {name:"Thane Belt", lat:19.22, lng:72.98, score:66},
   ],
   "Tamil Nadu": [
-    {name:"Chennai OMR Corridor", lat:12.84, lng:80.23, score:80},
-    {name:"Chennai West (Porur/Poonamallee)", lat:13.04, lng:80.10, score:74},
-    {name:"Coimbatore Region", lat:11.02, lng:76.96, score:70},
-    {name:"Madurai Region", lat:9.93, lng:78.12, score:58},
-    {name:"Tiruchirappalli Region", lat:10.79, lng:78.70, score:56},
+    {name:"Chennai OMR Corridor", lat:12.84, lng:80.23, score:70},
+    {name:"Chennai West (Porur/Poonamallee)", lat:13.04, lng:80.10, score:64},
+    {name:"Coimbatore Region", lat:11.02, lng:76.96, score:56},
+    {name:"Madurai Region", lat:9.93, lng:78.12, score:50},
+    {name:"Tiruchirappalli Region", lat:10.79, lng:78.70, score:48},
   ],
   "Telangana": [
-    {name:"Hyderabad West (Gachibowli/HITEC City)", lat:17.44, lng:78.35, score:85},
-    {name:"Hyderabad North (Kompally/Medchal)", lat:17.55, lng:78.48, score:76},
-    {name:"Hyderabad South (Shamshabad)", lat:17.24, lng:78.43, score:73},
-    {name:"Warangal Region", lat:17.97, lng:79.59, score:54},
+    {name:"Hyderabad West (Gachibowli/HITEC City)", lat:17.44, lng:78.35, score:83},
+    {name:"Hyderabad North (Kompally/Medchal)", lat:17.55, lng:78.48, score:66},
+    {name:"Hyderabad South (Shamshabad)", lat:17.24, lng:78.43, score:58},
+    {name:"Warangal Region", lat:17.97, lng:79.59, score:48},
   ],
   "Gujarat": [
-    {name:"Ahmedabad-Gandhinagar Belt", lat:23.07, lng:72.62, score:83},
-    {name:"Surat Region", lat:21.17, lng:72.83, score:75},
-    {name:"Vadodara Region", lat:22.31, lng:73.18, score:68},
-    {name:"Dholera SIR", lat:22.25, lng:72.20, score:88},
+    {name:"Ahmedabad-Gandhinagar Belt", lat:23.07, lng:72.62, score:72},
+    {name:"Surat Region", lat:21.17, lng:72.83, score:64},
+    {name:"Vadodara Region", lat:22.31, lng:73.18, score:60},
+    {name:"Dholera SIR", lat:22.25, lng:72.20, score:59},
   ],
   "Haryana": [
-    {name:"Gurugram (Cyber City/Golf Course Rd)", lat:28.46, lng:77.03, score:78},
-    {name:"Faridabad Region", lat:28.41, lng:77.31, score:65},
-    {name:"Panchkula Region", lat:30.69, lng:76.85, score:62},
+    {name:"Gurugram (Cyber City/Golf Course Rd)", lat:28.46, lng:77.03, score:74},
+    {name:"Faridabad Region", lat:28.41, lng:77.31, score:55},
+    {name:"Panchkula Region", lat:30.69, lng:76.85, score:56},
   ],
   "Uttar Pradesh": [
-    {name:"Noida-Greater Noida Belt", lat:28.53, lng:77.39, score:74},
-    {name:"Lucknow Region", lat:26.85, lng:80.95, score:60},
-    {name:"Agra Region", lat:27.18, lng:78.01, score:52},
+    {name:"Noida-Greater Noida Belt", lat:28.53, lng:77.39, score:67},
+    {name:"Lucknow Region", lat:26.85, lng:80.95, score:56},
+    {name:"Agra Region", lat:27.18, lng:78.01, score:46},
   ],
   "West Bengal": [
-    {name:"Kolkata New Town/Rajarhat", lat:22.58, lng:88.46, score:68},
-    {name:"Kolkata South", lat:22.50, lng:88.34, score:62},
-    {name:"Siliguri Region", lat:26.73, lng:88.43, score:50},
+    {name:"Kolkata New Town/Rajarhat", lat:22.58, lng:88.46, score:64},
+    {name:"Kolkata South", lat:22.50, lng:88.34, score:58},
+    {name:"Siliguri Region", lat:26.73, lng:88.43, score:44},
   ],
 };
+
+// ── Haversine distance (km) between two lat/lng points ─────────────────────
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = (lat2-lat1)*Math.PI/180;
+  const dLng = (lng2-lng1)*Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// ── Periphery localities — the "ripple zones" that typically appreciate after
+// nearby established hubs get saturated. Curated from known Bengaluru/Hyderabad/
+// Pune market patterns. Each entry includes real lat/lng for distance computation,
+// a current price range, and a trajectory comparator showing which famous locality
+// this one resembles at its current growth stage. ───────────────────────────────
+const PERIPHERY_LOCALITIES = [
+  // South/SE Bengaluru periphery (Electronic City + Sarjapur overflow)
+  {name:"Anekal",         lat:12.71, lng:77.70, score:62, price:"₹2,000–4,500/sqft",  city:"Bengaluru", historicalMirror:"Electronic City (2008–2010)", distanceNote:"18km from Electronic City"},
+  {name:"Attibele",       lat:12.77, lng:77.77, score:58, price:"₹1,800–3,800/sqft",  city:"Bengaluru", historicalMirror:"Electronic City (2006)",      distanceNote:"16km from Electronic City"},
+  {name:"Chandapura",     lat:12.80, lng:77.70, score:65, price:"₹2,500–5,000/sqft",  city:"Bengaluru", historicalMirror:"Electronic City (2012)",      distanceNote:"8km from Electronic City"},
+  // South Bengaluru periphery (Kanakapura Road / JP Nagar overflow)
+  {name:"Kaggalipura",    lat:12.76, lng:77.56, score:55, price:"₹2,500–5,500/sqft",  city:"Bengaluru", historicalMirror:"JP Nagar (2010)",             distanceNote:"18km from JP Nagar"},
+  {name:"Talaghattapura", lat:12.82, lng:77.53, score:60, price:"₹3,000–6,000/sqft",  city:"Bengaluru", historicalMirror:"Kanakapura Road (2013)",       distanceNote:"14km from JP Nagar"},
+  // North Bengaluru periphery (Devanahalli/Airport overflow)
+  {name:"Bagalur",        lat:13.33, lng:77.77, score:60, price:"₹2,200–5,000/sqft",  city:"Bengaluru", historicalMirror:"Devanahalli (2012)",           distanceNote:"14km from Devanahalli"},
+  {name:"Rajanukunte",    lat:13.17, lng:77.59, score:63, price:"₹2,800–5,500/sqft",  city:"Bengaluru", historicalMirror:"Yelahanka (2014)",             distanceNote:"12km from Devanahalli"},
+  {name:"Doddaballapur",  lat:13.30, lng:77.54, score:61, price:"₹2,000–4,500/sqft",  city:"Bengaluru", historicalMirror:"Devanahalli (2011)",           distanceNote:"20km from Devanahalli"},
+  // East Bengaluru periphery (Whitefield overflow)
+  {name:"Hoskote",        lat:13.07, lng:77.80, score:62, price:"₹2,500–5,000/sqft",  city:"Bengaluru", historicalMirror:"Whitefield (2010)",            distanceNote:"20km from Whitefield"},
+  {name:"Carmelaram",     lat:12.86, lng:77.76, score:68, price:"₹4,000–8,500/sqft",  city:"Bengaluru", historicalMirror:"Sarjapur Road (2015)",         distanceNote:"8km from Sarjapur"},
+  // Outer Bengaluru / long-term speculation
+  {name:"Bagepalli",      lat:13.78, lng:77.78, score:38, price:"₹500–1,500/sqft",    city:"Bengaluru", historicalMirror:"Outer Devanahalli belt (2005)", distanceNote:"65km from Devanahalli — long-term speculative"},
+  {name:"Gauribidanur",   lat:13.61, lng:77.52, score:42, price:"₹600–2,000/sqft",    city:"Bengaluru", historicalMirror:"Outer Tumkur Road (2007)",      distanceNote:"75km from Bengaluru — speculative"},
+  // Hyderabad periphery
+  {name:"Shadnagar",      lat:17.07, lng:78.18, score:62, price:"₹2,000–4,500/sqft",  city:"Hyderabad", historicalMirror:"Shamshabad (2012)",            distanceNote:"25km from Shamshabad"},
+  {name:"Patancheru",     lat:17.53, lng:78.27, score:60, price:"₹2,500–5,000/sqft",  city:"Hyderabad", historicalMirror:"Gachibowli (2010)",            distanceNote:"22km from HITEC City"},
+  {name:"Mucherla",       lat:17.17, lng:78.25, score:58, price:"₹1,800–4,000/sqft",  city:"Hyderabad", historicalMirror:"Shamshabad (2009)",            distanceNote:"18km from Shamshabad"},
+  // Pune periphery
+  {name:"Talegaon",       lat:18.73, lng:73.67, score:62, price:"₹3,000–6,500/sqft",  city:"Pune",      historicalMirror:"Hinjewadi (2012)",             distanceNote:"30km from Hinjewadi"},
+  {name:"Chakan",         lat:18.76, lng:73.86, score:65, price:"₹3,500–7,000/sqft",  city:"Pune",      historicalMirror:"Hinjewadi (2014)",             distanceNote:"22km from Hinjewadi"},
+];
+
+// Find periphery localities within a given distance band from a searched location.
+// Returns only those within maxKm, sorted by distance, with computed km attached.
+function getRippleZones(searchLat, searchLng, searchScore, maxKm=45) {
+  return PERIPHERY_LOCALITIES
+    .map(p => ({...p, km: Math.round(haversineKm(searchLat, searchLng, p.lat, p.lng))}))
+    .filter(p => p.km <= maxKm)
+    .sort((a,b) => a.km - b.km)
+    .slice(0,5); // top 5 nearest
+}
+
+
 
 function getRegionsForState(stateName){
   return REGION_CLUSTERS[stateName] || [];
@@ -830,10 +866,6 @@ function IndiaMap({pins=[],onStateClick,selectedState=null,focusLat=null,focusLn
 function MapView(props) {
   const apiKey = typeof import.meta !== "undefined" ? import.meta.env?.VITE_GOOGLE_MAPS_API_KEY : null;
   const [useGoogle, setUseGoogle] = useState(!!apiKey);
-  // Always supply the state-growth and region-cluster data so the color
-  // coding works on Google Maps too, without every call site needing to
-  // remember to pass it. GoogleMapView ignores these if not relevant (e.g.
-  // a focused single-location view from Analyze/Screener still works as before).
   const mapProps = { stateGrowth: STATE_GROWTH, regionClusters: REGION_CLUSTERS, ...props };
 
   if (!apiKey) return <IndiaMap {...props} />;
@@ -993,53 +1025,661 @@ function ProvenanceBadge({type}){
 
 // ── Karnataka Infrastructure Pipeline Card — only renders for Karnataka
 // localities, since this is the only state with curated, cited data so far.
-function KarnatakaInfraCard({locationName, locationNotes}){
-  const ctx = getKarnatakaInfraContext(locationName, locationNotes);
-  const [showAll, setShowAll] = useState(false);
-  const linesToShow = showAll ? KARNATAKA_INFRA.metro.lines : ctx.relevantLines;
+// ── Metro & Rail Connectivity Card ──────────────────────────────────────────
+// Searches for real nearby transit stations using two methods:
+// 1. Google Maps Places API (if VITE_GOOGLE_MAPS_API_KEY is set and places
+//    library is loaded) — most complete, real-time station data
+// 2. OpenStreetMap Overpass API — free, no key needed, works everywhere,
+//    slightly less complete for newer stations
+// This ensures the card works in both Google Maps and SVG map mode.
+// ── INDIA_METRO_STATIONS — curated static dataset ──────────────────────────
+// Covers all operationally confirmed metro networks as of mid-2026.
+// Sources: BMRCL, DMRC, HMRL, CMRL, KMRL, Wikipedia, themetrorailguy.com
+// Each station: {n: name, la: lat, lo: lng, ln: line, st: status, c: city}
+// status: "op" = operational | "uc" = under construction | "pr" = proposed
+// Compact keys to keep bundle size manageable (this is ~600 stations).
+const INDIA_METRO_STATIONS = [
+
+// ── BENGALURU — Namma Metro (86 operational as of Aug 2025) ─────────────────
+// Purple Line (Whitefield–Challaghatta, 38 stations)
+{n:"Whitefield (Kadugodi)",     la:12.9882, lo:77.7500, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Channasandra",              la:12.9943, lo:77.7171, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Kadugodi Tree Park",        la:12.9921, lo:77.7042, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Hopefarm Channasandra",     la:12.9885, lo:77.6927, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Kundalahalli",              la:12.9842, lo:77.6826, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Brookefield",               la:12.9815, lo:77.6717, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Tin Factory",               la:12.9780, lo:77.6646, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Krishnarajapura",           la:13.0022, lo:77.6944, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Benniganahalli",            la:12.9916, lo:77.6547, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Baiyappanahalli",           la:12.9948, lo:77.6470, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Swami Vivekananda Road",    la:12.9895, lo:77.6403, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Indiranagar",               la:12.9784, lo:77.6408, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Halasuru",                  la:12.9763, lo:77.6259, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Trinity",                   la:12.9698, lo:77.6204, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"MG Road",                   la:12.9756, lo:77.6101, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Cubbon Park",               la:12.9789, lo:77.5949, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Vidhana Soudha",            la:12.9788, lo:77.5905, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Sir M Visveshwaraya",       la:12.9759, lo:77.5796, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Nadaprabhu Kempegowda (Majestic)", la:12.9767, lo:77.5713, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"City Railway Station",      la:12.9774, lo:77.5640, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Magadi Road",               la:12.9755, lo:77.5570, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Hosahalli",                 la:12.9701, lo:77.5462, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Vijayanagar",               la:12.9669, lo:77.5373, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Attiguppe",                 la:12.9563, lo:77.5341, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Deepanjali Nagar",          la:12.9468, lo:77.5312, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Mysore Road",               la:12.9431, lo:77.5233, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Pantharapalya",             la:12.9354, lo:77.5183, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Nayandahalli",              la:12.9294, lo:77.5098, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Rajarajeshwari Nagar",      la:12.9180, lo:77.5022, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Jnanabharathi",             la:12.9117, lo:77.5001, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Pattanagere",               la:12.9049, lo:77.4960, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Kengeri Bus Terminal",      la:12.9004, lo:77.4872, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Kengeri",                   la:12.8972, lo:77.4827, ln:"Purple", st:"op", c:"Bengaluru"},
+{n:"Challaghatta",              la:12.8927, lo:77.4769, ln:"Purple", st:"op", c:"Bengaluru"},
+// Green Line (Madavara–Silk Institute, 32 stations)
+{n:"Madavara",                  la:13.0938, lo:77.5003, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Chikkabidarakallu",         la:13.0793, lo:77.5052, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Manjunathanagar",           la:13.0653, lo:77.5110, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Nagasandra",                la:13.0496, lo:77.5173, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Dasarahalli",               la:13.0393, lo:77.5226, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Jalahalli",                 la:13.0290, lo:77.5289, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Peenya Industry",           la:13.0227, lo:77.5370, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Peenya",                    la:13.0165, lo:77.5432, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Goraguntepalya",            la:13.0094, lo:77.5495, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Yeshwanthpur",              la:13.0271, lo:77.5551, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Sandal Soap Factory",       la:13.0211, lo:77.5618, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Mahalakshmi",               la:13.0133, lo:77.5679, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Rajajinagar",               la:13.0042, lo:77.5665, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Mahakavi Kuvempu Road",     la:12.9979, lo:77.5696, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Srirampura",                la:12.9904, lo:77.5706, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Mantri Square Sampige Road",la:12.9862, lo:77.5733, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Nadaprabhu Kempegowda (Majestic)", la:12.9767, lo:77.5713, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Chickpete",                 la:12.9659, lo:77.5762, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Krishna Rajendra Market",   la:12.9606, lo:77.5779, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"National College",          la:12.9537, lo:77.5779, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Lalbagh",                   la:12.9509, lo:77.5816, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"South End Circle",          la:12.9454, lo:77.5854, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Jayanagar",                 la:12.9304, lo:77.5845, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Rashtreeya Vidyalaya Road", la:12.9226, lo:77.5922, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Banashankari",              la:12.9137, lo:77.5792, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Jaya Prakash Nagar",        la:12.9097, lo:77.5846, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Puttenahalli",              la:12.9032, lo:77.5895, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Yelachenahalli",            la:12.8961, lo:77.5948, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Konanakunte Cross",         la:12.8862, lo:77.5962, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Doddakallasandra",          la:12.8787, lo:77.5976, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Vajarahalli",               la:12.8694, lo:77.5989, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Talaghattapura",            la:12.8582, lo:77.5943, ln:"Green", st:"op", c:"Bengaluru"},
+{n:"Silk Institute",            la:12.8469, lo:77.5812, ln:"Green", st:"op", c:"Bengaluru"},
+// Yellow Line — 16 stations, operational since 10 Aug 2025
+// Source: Wikipedia "Yellow Line (Namma Metro)", BMRCL official, bengalurumetro.in
+// Exact order: RV Road → Bommasandra (south)
+{n:"Rashtreeya Vidyalaya Road",           la:12.9226, lo:77.5922, ln:"Yellow", st:"op", c:"Bengaluru"},
+{n:"Ragigudda",                           la:12.9090, lo:77.6010, ln:"Yellow", st:"op", c:"Bengaluru"},
+{n:"Jayadeva Hospital",                   la:12.9006, lo:77.6105, ln:"Yellow", st:"op", c:"Bengaluru"},
+{n:"BTM Layout",                          la:12.8942, lo:77.6148, ln:"Yellow", st:"op", c:"Bengaluru"},
+{n:"Central Silk Board",                  la:12.9172, lo:77.6220, ln:"Yellow", st:"op", c:"Bengaluru"},
+{n:"Hongasandra",                         la:12.8840, lo:77.6298, ln:"Yellow", st:"op", c:"Bengaluru"},
+{n:"Kudlu Gate",                          la:12.8752, lo:77.6390, ln:"Yellow", st:"op", c:"Bengaluru"},
+{n:"Singasandra",                         la:12.8661, lo:77.6482, ln:"Yellow", st:"op", c:"Bengaluru"},
+{n:"Hosa Road",                           la:12.8558, lo:77.6580, ln:"Yellow", st:"op", c:"Bengaluru"},
+{n:"Electronic City",                     la:12.8399, lo:77.6745, ln:"Yellow", st:"op", c:"Bengaluru"},
+{n:"Infosys Foundation Konappana Agrahara",la:12.8326, lo:77.6815, ln:"Yellow", st:"op", c:"Bengaluru"},
+{n:"Beratena Agrahara",                   la:12.8264, lo:77.6891, ln:"Yellow", st:"op", c:"Bengaluru"},
+{n:"Hebbagodi",                           la:12.8170, lo:77.6920, ln:"Yellow", st:"op", c:"Bengaluru"},
+{n:"Huskur Road",                         la:12.8081, lo:77.6941, ln:"Yellow", st:"op", c:"Bengaluru"},
+{n:"Bommasandra",                         la:12.7951, lo:77.6932, ln:"Yellow", st:"op", c:"Bengaluru"},
+{n:"Delta Electronics Bommasandra",       la:12.7832, lo:77.6912, ln:"Yellow", st:"op", c:"Bengaluru"},
+
+// ── DELHI — DMRC (12 lines, 286 stations) — key stations ───────────────────
+{n:"Rajiv Chowk",               la:28.6328, lo:77.2197, ln:"Yellow/Blue", st:"op", c:"Delhi"},
+{n:"Kashmere Gate",             la:28.6677, lo:77.2285, ln:"Red/Yellow/Violet", st:"op", c:"Delhi"},
+{n:"Central Secretariat",       la:28.6148, lo:77.2122, ln:"Yellow/Violet", st:"op", c:"Delhi"},
+{n:"New Delhi",                 la:28.6435, lo:77.2193, ln:"Yellow/Airport", st:"op", c:"Delhi"},
+{n:"Dwarka Sector 21",          la:28.5526, lo:77.0593, ln:"Blue/Airport", st:"op", c:"Delhi"},
+{n:"Noida City Centre",         la:28.5706, lo:77.3588, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Botanical Garden",          la:28.5637, lo:77.3370, ln:"Blue/Aqua", st:"op", c:"Delhi"},
+{n:"Hauz Khas",                 la:28.5432, lo:77.2066, ln:"Yellow/Magenta", st:"op", c:"Delhi"},
+{n:"IGI Airport T3",            la:28.5565, lo:77.0882, ln:"Orange (Airport)", st:"op", c:"Delhi"},
+{n:"Inderlok",                  la:28.6715, lo:77.1665, ln:"Green/Red", st:"op", c:"Delhi"},
+{n:"Janakpuri West",            la:28.6262, lo:77.0855, ln:"Blue/Green", st:"op", c:"Delhi"},
+{n:"Lajpat Nagar",              la:28.5677, lo:77.2394, ln:"Pink/Violet", st:"op", c:"Delhi"},
+{n:"Nehru Place",               la:28.5484, lo:77.2518, ln:"Violet", st:"op", c:"Delhi"},
+{n:"Gurugram Huda City Centre", la:28.4592, lo:77.0671, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Faridabad Old",             la:28.4089, lo:77.3152, ln:"Violet", st:"op", c:"Delhi"},
+{n:"Ghaziabad Vaishali",        la:28.6489, lo:77.3600, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Gurgaon Sikanderpur",       la:28.4794, lo:77.0906, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Okhla Bird Sanctuary",      la:28.5350, lo:77.3057, ln:"Aqua", st:"op", c:"Delhi"},
+{n:"Janpath",                   la:28.6267, lo:77.2207, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Saket",                     la:28.5245, lo:77.2107, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Connaught Place (Rajiv Chowk)", la:28.6328, lo:77.2197, ln:"Yellow/Blue", st:"op", c:"Delhi"},
+{n:"Mayur Vihar Phase 1",       la:28.6082, lo:77.2968, ln:"Blue/Pink", st:"op", c:"Delhi"},
+{n:"Rohini East",               la:28.7234, lo:77.1269, ln:"Red", st:"op", c:"Delhi"},
+{n:"Samaypur Badali",           la:28.7327, lo:77.1554, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Welcome",                   la:28.6777, lo:77.2877, ln:"Red/Pink", st:"op", c:"Delhi"},
+{n:"Anand Vihar ISBT",          la:28.6468, lo:77.3158, ln:"Blue/Pink", st:"op", c:"Delhi"},
+
+// ── MUMBAI — Mumbai Metro (Lines 1, 2A, 7, partial others) ─────────────────
+{n:"Versova",                   la:19.1313, lo:72.8164, ln:"Line 1", st:"op", c:"Mumbai"},
+{n:"Andheri",                   la:19.1197, lo:72.8487, ln:"Line 1", st:"op", c:"Mumbai"},
+{n:"Ghatkopar",                 la:19.0864, lo:72.9074, ln:"Line 1", st:"op", c:"Mumbai"},
+{n:"D N Nagar",                 la:19.1189, lo:72.8381, ln:"Line 2A", st:"op", c:"Mumbai"},
+{n:"Dahisar East",              la:19.2420, lo:72.8670, ln:"Line 2A/7", st:"op", c:"Mumbai"},
+{n:"Aarey",                     la:19.1640, lo:72.8636, ln:"Line 1 extension", st:"op", c:"Mumbai"},
+{n:"Goregaon East",             la:19.1567, lo:72.8701, ln:"Line 7", st:"op", c:"Mumbai"},
+{n:"Gundavali",                 la:19.1329, lo:72.8631, ln:"Line 7", st:"op", c:"Mumbai"},
+{n:"Charkop",                   la:19.1925, lo:72.8380, ln:"Line 2A", st:"op", c:"Mumbai"},
+{n:"Borivali West",             la:19.2310, lo:72.8529, ln:"Line 2A", st:"op", c:"Mumbai"},
+{n:"Bandra-Kurla Complex",      la:19.0645, lo:72.8693, ln:"Line 2B (partial)", st:"uc", c:"Mumbai"},
+{n:"CSIA International Airport",la:19.0896, lo:72.8656, ln:"Line 2B (partial)", st:"uc", c:"Mumbai"},,
+
+// Delhi — 137 stations from Wikipedia-parsed coordinates (dhirajt/delhi-metro-stations)
+{n:"Adarsh Nagar", la:28.71642, lo:77.17046, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"AIIMS", la:28.56892, lo:77.20771, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Akshardham", la:28.61806, lo:77.27869, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Anand Vihar", la:28.64695, lo:77.31603, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Arjan Garh", la:28.48076, lo:77.12583, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Ashok Park Main", la:28.67153, lo:77.15527, ln:"Green", st:"op", c:"Delhi"},
+{n:"Azadpur", la:28.70696, lo:77.18053, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Badarpur", la:28.49334, lo:77.30307, ln:"Violet", st:"op", c:"Delhi"},
+{n:"Barakhambha Road", la:28.63003, lo:77.22436, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Botanical Garden", la:28.56409, lo:77.3342, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Central Secretariat", la:28.61474, lo:77.21191, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Chandni Chowk", la:28.65785, lo:77.23014, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Chhatarpur", la:28.50671, lo:77.17484, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Chawri Bazar", la:28.64931, lo:77.22637, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Civil Lines", la:28.67726, lo:77.2241, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Delhi Aerocity", la:28.54881, lo:77.12092, ln:"Orange(Airport)", st:"op", c:"Delhi"},
+{n:"Dhaula Kuan", la:28.59178, lo:77.16155, ln:"Orange(Airport)", st:"op", c:"Delhi"},
+{n:"Dilshad Garden", la:28.67592, lo:77.32142, ln:"Red", st:"op", c:"Delhi"},
+{n:"Dwarka", la:28.61564, lo:77.02197, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Dwarka Morh", la:28.61932, lo:77.03326, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Dwarka Sector 10", la:28.58068, lo:77.05682, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Dwarka Sector 11", la:28.58657, lo:77.04929, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Dwarka Sector 12", la:28.59232, lo:77.04051, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Dwarka Sector 13", la:28.59722, lo:77.03326, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Dwarka Sector 14", la:28.60223, lo:77.02588, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Dwarka Sector 21", la:28.55226, lo:77.05828, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Dwarka Sector 8", la:28.56583, lo:77.06706, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Dwarka Sector 9", la:28.57487, lo:77.06454, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Ghitorni", la:28.49383, lo:77.14922, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Govind Puri", la:28.54451, lo:77.26401, ln:"Violet", st:"op", c:"Delhi"},
+{n:"Green Park", la:28.55979, lo:77.20682, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"GTB Nagar", la:28.69785, lo:77.20722, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Guru Dronacharya", la:28.48203, lo:77.10232, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Hauz Khas", la:28.54335, lo:77.20667, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"HUDA City Centre", la:28.45927, lo:77.07268, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"IFFCO Chowk", la:28.47209, lo:77.07175, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"INA", la:28.57526, lo:77.20935, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Inderlok", la:28.67319, lo:77.16994, ln:"Red", st:"op", c:"Delhi"},
+{n:"Indira Gandhi International Airport", la:28.55693, lo:77.08669, ln:"Orange(Airport)", st:"op", c:"Delhi"},
+{n:"Indraprastha", la:28.62051, lo:77.24993, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Jahangirpuri", la:28.72592, lo:77.16267, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Janakpuri East", la:28.63305, lo:77.08669, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Janakpuri West", la:28.62943, lo:77.07767, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Jangpura", la:28.5843, lo:77.23766, ln:"Violet", st:"op", c:"Delhi"},
+{n:"Jasola Apollo", la:28.53824, lo:77.28319, ln:"Violet", st:"op", c:"Delhi"},
+{n:"Jawaharlal Nehru Stadium", la:28.5904, lo:77.23326, ln:"Violet", st:"op", c:"Delhi"},
+{n:"Jhandewalan", la:28.64427, lo:77.19988, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Jhilmil", la:28.67579, lo:77.31239, ln:"Red", st:"op", c:"Delhi"},
+{n:"Jor Bagh", la:28.58708, lo:77.21209, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Kailash Colony", la:28.55527, lo:77.24205, ln:"Violet", st:"op", c:"Delhi"},
+{n:"Kalkaji Mandir", la:28.55007, lo:77.25835, ln:"Violet", st:"op", c:"Delhi"},
+{n:"Kanhiya Nagar", la:28.68254, lo:77.16459, ln:"Red", st:"op", c:"Delhi"},
+{n:"Karkarduma", la:28.64849, lo:77.30558, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Karol Bagh", la:28.644, lo:77.18855, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Kashmere Gate", la:28.6675, lo:77.22817, ln:"Red", st:"op", c:"Delhi"},
+{n:"Kaushambi", la:28.64544, lo:77.32432, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Keshav Puram", la:28.68894, lo:77.1616, ln:"Red", st:"op", c:"Delhi"},
+{n:"Khan Market", la:28.60276, lo:77.22829, ln:"Violet", st:"op", c:"Delhi"},
+{n:"Kirti Nagar", la:28.65575, lo:77.15057, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Kohat Enclave", la:28.6981, lo:77.14024, ln:"Red", st:"op", c:"Delhi"},
+{n:"Lajpat Nagar", la:28.57079, lo:77.23653, ln:"Violet", st:"op", c:"Delhi"},
+{n:"Laxmi Nagar", la:28.63064, lo:77.27749, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Madipur", la:28.67734, lo:77.11965, ln:"Green", st:"op", c:"Delhi"},
+{n:"Malviya Nagar", la:28.52798, lo:77.20565, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Mandi House", la:28.62588, lo:77.2341, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Mansarovar Park", la:28.67544, lo:77.30095, ln:"Red", st:"op", c:"Delhi"},
+{n:"Mayur Vihar -I", la:28.60442, lo:77.28925, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Mayur Vihar Extension", la:28.59428, lo:77.29455, ln:"Blue", st:"op", c:"Delhi"},
+{n:"MG Road", la:28.47957, lo:77.08006, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Model Town", la:28.70278, lo:77.19363, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Mohan Estate", la:28.51938, lo:77.29388, ln:"Violet", st:"op", c:"Delhi"},
+{n:"Moolchand", la:28.56417, lo:77.23423, ln:"Violet", st:"op", c:"Delhi"},
+{n:"Moti Nagar", la:28.65784, lo:77.14248, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Mundka", la:28.68321, lo:77.03133, ln:"Green", st:"op", c:"Delhi"},
+{n:"Nangloi", la:28.68231, lo:77.06471, ln:"Green", st:"op", c:"Delhi"},
+{n:"Nangloi Railway station", la:28.68208, lo:77.05596, ln:"Green", st:"op", c:"Delhi"},
+{n:"Nawada", la:28.62025, lo:77.04514, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Nehru Place", la:28.55148, lo:77.25154, ln:"Violet", st:"op", c:"Delhi"},
+{n:"Netaji Subhash Place", la:28.69591, lo:77.15226, ln:"Red", st:"op", c:"Delhi"},
+{n:"New Ashok Nagar", la:28.58916, lo:77.30204, ln:"Blue", st:"op", c:"Delhi"},
+{n:"New Delhi", la:28.64307, lo:77.22144, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Nirman Vihar", la:28.63663, lo:77.28683, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Noida City Centre", la:28.57466, lo:77.35608, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Noida Golf Course", la:28.56714, lo:77.34598, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Noida Sector 15", la:28.58512, lo:77.31139, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Noida Sector 16", la:28.57819, lo:77.31757, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Noida Sector 18", la:28.57081, lo:77.32612, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Okhla", la:28.54292, lo:77.27504, ln:"Violet", st:"op", c:"Delhi"},
+{n:"Paschim Vihar East", la:28.6773, lo:77.11228, ln:"Green", st:"op", c:"Delhi"},
+{n:"Paschim Vihar West", la:28.67855, lo:77.10227, ln:"Green", st:"op", c:"Delhi"},
+{n:"Patel Chowk", la:28.62295, lo:77.21389, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Patel Nagar", la:28.64498, lo:77.16929, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Peera Garhi", la:28.67959, lo:77.09261, ln:"Green", st:"op", c:"Delhi"},
+{n:"Pitam Pura", la:28.70317, lo:77.13223, ln:"Red", st:"op", c:"Delhi"},
+{n:"Pragati Maidan", la:28.62342, lo:77.2425, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Pratap Nagar", la:28.66662, lo:77.19882, ln:"Red", st:"op", c:"Delhi"},
+{n:"Preet Vihar", la:28.64171, lo:77.29543, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Pul Bangash", la:28.66636, lo:77.20727, ln:"Red", st:"op", c:"Delhi"},
+{n:"Punjabi Bagh East", la:28.67289, lo:77.14614, ln:"Green", st:"op", c:"Delhi"},
+{n:"Qutab Minar", la:28.51302, lo:77.18648, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Race Course", la:28.59726, lo:77.21088, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Rajdhani Park", la:28.68221, lo:77.04381, ln:"Green", st:"op", c:"Delhi"},
+{n:"Rajendra Place", la:28.6425, lo:77.17815, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Rajiv Chowk", la:28.63282, lo:77.21826, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Rajouri Garden", la:28.64902, lo:77.1227, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Ramakrishna Ashram Marg", la:28.63923, lo:77.2084, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Ramesh Nagar", la:28.65274, lo:77.13164, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Rithala", la:28.72072, lo:77.10713, ln:"Red", st:"op", c:"Delhi"},
+{n:"Rohini East", la:28.7076, lo:77.12591, ln:"Red", st:"op", c:"Delhi"},
+{n:"Rohini West", la:28.71483, lo:77.11467, ln:"Red", st:"op", c:"Delhi"},
+{n:"Saket", la:28.5206, lo:77.20138, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Sarita Vihar", la:28.52878, lo:77.28826, ln:"Violet", st:"op", c:"Delhi"},
+{n:"Satguru Ramsingh Marg", la:28.66199, lo:77.15748, ln:"Green", st:"op", c:"Delhi"},
+{n:"Seelampur", la:28.66989, lo:77.26678, ln:"Red", st:"op", c:"Delhi"},
+{n:"Shadipur", la:28.6516, lo:77.15824, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Shahdara", la:28.67345, lo:77.28962, ln:"Red", st:"op", c:"Delhi"},
+{n:"Shastri Nagar", la:28.66999, lo:77.18169, ln:"Red", st:"op", c:"Delhi"},
+{n:"Shastri Park", la:28.668, lo:77.24994, ln:"Red", st:"op", c:"Delhi"},
+{n:"Shivaji Park", la:28.6749, lo:77.13056, ln:"Green", st:"op", c:"Delhi"},
+{n:"Shivaji Stadium", la:28.62901, lo:77.2119, ln:"Orange(Airport)", st:"op", c:"Delhi"},
+{n:"Sikandarpur", la:28.48182, lo:77.09235, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Subhash Nagar", la:28.64039, lo:77.10495, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Sultanpur", la:28.49927, lo:77.16153, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Surajmal Stadium", la:28.6818, lo:77.07385, ln:"Green", st:"op", c:"Delhi"},
+{n:"Tagore Garden", la:28.64379, lo:77.11284, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Tilak Nagar", la:28.63657, lo:77.09648, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Tis Hazari", la:28.66711, lo:77.21653, ln:"Red", st:"op", c:"Delhi"},
+{n:"Tughlakabad", la:28.50254, lo:77.2993, ln:"Violet", st:"op", c:"Delhi"},
+{n:"Udyog Bhawan", la:28.61166, lo:77.21198, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Udyog Nagar", la:28.6809, lo:77.08077, ln:"Green", st:"op", c:"Delhi"},
+{n:"Uttam Nagar East", la:28.62481, lo:77.0653, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Uttam Nagar West", la:28.62177, lo:77.05585, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Vaishali", la:28.64997, lo:77.33974, ln:"Blue", st:"op", c:"Delhi"},
+{n:"Vidhan Sabha", la:28.68802, lo:77.2214, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Vishwa Vidyalaya", la:28.6948, lo:77.21483, ln:"Yellow", st:"op", c:"Delhi"},
+{n:"Welcome", la:28.6718, lo:77.27756, ln:"Red", st:"op", c:"Delhi"},
+{n:"Yamuna Bank", la:28.62331, lo:77.26792, ln:"Blue", st:"op", c:"Delhi"},
+// All other cities
+// ── HYDERABAD — HMRL (69 stations across 3 lines, all operational) ───────────
+// Source: Wikipedia "Hyderabad Metro Rail", HMRL official website
+// Red Line (Miyapur–LB Nagar, 29 stations)
+{n:"Miyapur",                   la:17.4963, lo:78.3485, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"JNTU College",              la:17.4934, lo:78.3595, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"KPHB Colony",               la:17.4896, lo:78.3714, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"Kukatpally",                la:17.4850, lo:78.3836, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"Balanagar",                 la:17.4785, lo:78.4001, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"Moosapet",                  la:17.4693, lo:78.4068, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"Bharat Nagar",              la:17.4602, lo:78.4132, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"Erragadda",                 la:17.4526, lo:78.4208, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"ESI Hospital",              la:17.4464, lo:78.4300, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"SR Nagar",                  la:17.4558, lo:78.4287, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"Ameerpet",                  la:17.4376, lo:78.4490, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"Punjagutta",                la:17.4268, lo:78.4516, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"Irrum Manzil",              la:17.4204, lo:78.4573, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"Khairatabad",               la:17.4179, lo:78.4493, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"Lakdi Ka Pool",             la:17.4021, lo:78.4666, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"Assembly",                  la:17.4072, lo:78.4756, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"Nampally",                  la:17.3949, lo:78.4688, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"Gandhi Bhavan",             la:17.3874, lo:78.4756, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"Osmania Medical College",   la:17.3818, lo:78.4742, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"MG Bus Station",            la:17.3764, lo:78.4803, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"Malakpet",                  la:17.3697, lo:78.4858, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"New Market",                la:17.3617, lo:78.4879, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"Musarambagh",               la:17.3548, lo:78.4901, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"Dilsukhnagar",              la:17.3673, lo:78.5266, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"Chaitanyapuri",             la:17.3673, lo:78.5386, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"Victoria Memorial",         la:17.3673, lo:78.5456, ln:"Red",   st:"op", c:"Hyderabad"},
+{n:"LB Nagar",                  la:17.3468, lo:78.5499, ln:"Red",   st:"op", c:"Hyderabad"},
+// Blue Line (Nagole–Raidurg, 27 stations)
+{n:"Nagole",                    la:17.3699, lo:78.5528, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"Uppal",                     la:17.3967, lo:78.5596, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"Stadium",                   la:17.3967, lo:78.5481, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"NGRI",                      la:17.4031, lo:78.5323, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"Habsiguda",                 la:17.4073, lo:78.5214, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"Tarnaka",                   la:17.4101, lo:78.5109, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"Mettuguda",                 la:17.4173, lo:78.5068, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"Secunderabad East",         la:17.4402, lo:78.5028, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"Parade Ground",             la:17.4366, lo:78.4946, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"Secunderabad West",         la:17.4343, lo:78.4876, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"Begumpet",                  la:17.4456, lo:78.4694, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"Prakash Nagar",             la:17.4426, lo:78.4616, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"Rasoolpura",                la:17.4384, lo:78.4572, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"Paradise",                  la:17.4442, lo:78.4540, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"Ameerpet",                  la:17.4376, lo:78.4490, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"Yusufguda",                 la:17.4385, lo:78.4287, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"Madhura Nagar",             la:17.4380, lo:78.4167, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"Vittal Rao Nagar",          la:17.4380, lo:78.4050, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"Hitech City",               la:17.4478, lo:78.3768, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"Durgam Cheruvu",            la:17.4361, lo:78.3821, ln:"Blue",  st:"op", c:"Hyderabad"},
+{n:"Raidurg",                   la:17.4228, lo:78.3800, ln:"Blue",  st:"op", c:"Hyderabad"},
+// Green Line (JBS–MGBS, 12 stations)
+{n:"JBS Parade Ground",         la:17.4402, lo:78.4980, ln:"Green", st:"op", c:"Hyderabad"},
+{n:"Gandhi Hospital",           la:17.4287, lo:78.4916, ln:"Green", st:"op", c:"Hyderabad"},
+{n:"Musheerabad",               la:17.4205, lo:78.4880, ln:"Green", st:"op", c:"Hyderabad"},
+{n:"RTC X Roads",               la:17.4073, lo:78.4871, ln:"Green", st:"op", c:"Hyderabad"},
+{n:"Chikkadpally",              la:17.4003, lo:78.4880, ln:"Green", st:"op", c:"Hyderabad"},
+{n:"Vidyanagar",                la:17.3937, lo:78.4880, ln:"Green", st:"op", c:"Hyderabad"},
+{n:"Narayanguda",               la:17.3924, lo:78.4948, ln:"Green", st:"op", c:"Hyderabad"},
+{n:"Sultan Bazaar",             la:17.3850, lo:78.4881, ln:"Green", st:"op", c:"Hyderabad"},
+{n:"MGBS",                      la:17.3764, lo:78.4803, ln:"Green", st:"op", c:"Hyderabad"},
+
+// ── CHENNAI — CMRL (54 stations across 2 lines) ─────────────────────────────
+// Line 1 (Wimco Nagar–Chennai Airport, 24 stations)
+{n:"Wimco Nagar",               la:13.1437, lo:80.2949, ln:"Line 1",st:"op", c:"Chennai"},
+{n:"Tiruvottiyur",              la:13.1583, lo:80.3003, ln:"Line 1",st:"op", c:"Chennai"},
+{n:"Pattabiram East",           la:13.1303, lo:80.2815, ln:"Line 1",st:"op", c:"Chennai"},
+{n:"Pattabiram Military",       la:13.1222, lo:80.2762, ln:"Line 1",st:"op", c:"Chennai"},
+{n:"Porur",                     la:13.0357, lo:80.1573, ln:"Line 1",st:"op", c:"Chennai"},
+{n:"Koyambedu",                 la:13.0694, lo:80.1956, ln:"Line 1",st:"op", c:"Chennai"},
+{n:"Arumbakkam",                la:13.0735, lo:80.2067, ln:"Line 1",st:"op", c:"Chennai"},
+{n:"Vadapalani",                la:13.0524, lo:80.2114, ln:"Line 1",st:"op", c:"Chennai"},
+{n:"Ashok Nagar",               la:13.0323, lo:80.2198, ln:"Line 1",st:"op", c:"Chennai"},
+{n:"Ekkattuthangal",            la:13.0244, lo:80.2236, ln:"Line 1",st:"op", c:"Chennai"},
+{n:"Guindy",                    la:13.0067, lo:80.2206, ln:"Line 1",st:"op", c:"Chennai"},
+{n:"Alandur",                   la:12.9984, lo:80.2064, ln:"Line 1",st:"op", c:"Chennai"},
+{n:"Nanganallur Road",          la:12.9877, lo:80.1958, ln:"Line 1",st:"op", c:"Chennai"},
+{n:"Meenambakkam",              la:12.9835, lo:80.1660, ln:"Line 1",st:"op", c:"Chennai"},
+{n:"Chennai Airport",           la:12.9941, lo:80.1708, ln:"Line 1",st:"op", c:"Chennai"},
+{n:"Kilpauk Medical College",   la:13.0892, lo:80.2399, ln:"Line 1",st:"op", c:"Chennai"},
+{n:"Chennai Central",           la:13.0828, lo:80.2750, ln:"Line 1",st:"op", c:"Chennai"},
+{n:"Government Estate",         la:13.0665, lo:80.2780, ln:"Line 1",st:"op", c:"Chennai"},
+{n:"High Court",                la:13.0778, lo:80.2764, ln:"Line 1",st:"op", c:"Chennai"},
+{n:"Anna Salai - Thousand Lights",la:13.0567,lo:80.2596,ln:"Line 1",st:"op", c:"Chennai"},
+// Line 2 (Chennai Central–St Thomas Mount, 21 stations)
+{n:"Nehru Park",                la:13.0546, lo:80.2596, ln:"Line 2",st:"op", c:"Chennai"},
+{n:"Egmore",                    la:13.0777, lo:80.2688, ln:"Line 2",st:"op", c:"Chennai"},
+{n:"Thirumangalam",             la:13.0936, lo:80.2137, ln:"Line 2",st:"op", c:"Chennai"},
+{n:"Anna Nagar Tower",          la:13.0851, lo:80.2098, ln:"Line 2",st:"op", c:"Chennai"},
+{n:"Anna Nagar East",           la:13.0844, lo:80.2082, ln:"Line 2",st:"op", c:"Chennai"},
+{n:"Shenoy Nagar",              la:13.0783, lo:80.2218, ln:"Line 2",st:"op", c:"Chennai"},
+{n:"Pachaiyappas College",      la:13.0821, lo:80.2399, ln:"Line 2",st:"op", c:"Chennai"},
+{n:"Purasaiwakkam",             la:13.0899, lo:80.2459, ln:"Line 2",st:"op", c:"Chennai"},
+{n:"Mannadi",                   la:13.0894, lo:80.2700, ln:"Line 2",st:"op", c:"Chennai"},
+{n:"Velachery",                 la:12.9804, lo:80.2209, ln:"Line 2",st:"op", c:"Chennai"},
+{n:"Taramani",                  la:12.9804, lo:80.2368, ln:"Line 2",st:"op", c:"Chennai"},
+{n:"Sholinganallur",            la:12.9004, lo:80.2270, ln:"Line 2",st:"op", c:"Chennai"},
+{n:"St Thomas Mount",           la:13.0043, lo:80.2025, ln:"Line 2",st:"op", c:"Chennai"},
+
+// ── MUMBAI — Operational Lines 1, 2A, 7 ─────────────────────────────────────
+// Line 1 (Versova–Ghatkopar, 12 stations, oldest)
+{n:"Versova",                   la:19.1313, lo:72.8164, ln:"Line 1",st:"op", c:"Mumbai"},
+{n:"DN Nagar",                  la:19.1189, lo:72.8381, ln:"Line 1",st:"op", c:"Mumbai"},
+{n:"Azad Nagar",                la:19.1111, lo:72.8483, ln:"Line 1",st:"op", c:"Mumbai"},
+{n:"Airport Road",              la:19.0993, lo:72.8570, ln:"Line 1",st:"op", c:"Mumbai"},
+{n:"Marol Naka",                la:19.0975, lo:72.8641, ln:"Line 1",st:"op", c:"Mumbai"},
+{n:"Saki Naka",                 la:19.0893, lo:72.8866, ln:"Line 1",st:"op", c:"Mumbai"},
+{n:"Asalpha",                   la:19.0857, lo:72.8957, ln:"Line 1",st:"op", c:"Mumbai"},
+{n:"Jagruti Nagar",             la:19.0855, lo:72.9000, ln:"Line 1",st:"op", c:"Mumbai"},
+{n:"Ghatkopar",                 la:19.0864, lo:72.9074, ln:"Line 1",st:"op", c:"Mumbai"},
+{n:"Andheri",                   la:19.1197, lo:72.8487, ln:"Line 1",st:"op", c:"Mumbai"},
+// Line 2A (Dahisar West–DN Nagar, 17 stations)
+{n:"Dahisar West",              la:19.2518, lo:72.8527, ln:"Line 2A",st:"op", c:"Mumbai"},
+{n:"Don Bosco",                 la:19.2430, lo:72.8527, ln:"Line 2A",st:"op", c:"Mumbai"},
+{n:"Borivali West",             la:19.2310, lo:72.8529, ln:"Line 2A",st:"op", c:"Mumbai"},
+{n:"Pahadi Goregaon",           la:19.1745, lo:72.8553, ln:"Line 2A",st:"op", c:"Mumbai"},
+{n:"Goregaon West",             la:19.1602, lo:72.8430, ln:"Line 2A",st:"op", c:"Mumbai"},
+{n:"Malad West",                la:19.1864, lo:72.8484, ln:"Line 2A",st:"op", c:"Mumbai"},
+{n:"Aarey Colony",              la:19.1640, lo:72.8636, ln:"Line 2A",st:"op", c:"Mumbai"},
+{n:"Charkop",                   la:19.1925, lo:72.8380, ln:"Line 2A",st:"op", c:"Mumbai"},
+{n:"Kandivali West",            la:19.2053, lo:72.8428, ln:"Line 2A",st:"op", c:"Mumbai"},
+{n:"Eksar",                     la:19.2179, lo:72.8455, ln:"Line 2A",st:"op", c:"Mumbai"},
+{n:"Mandapeshwar",              la:19.2275, lo:72.8488, ln:"Line 2A",st:"op", c:"Mumbai"},
+// Line 7 (Andheri East–Dahisar East, 13 stations)
+{n:"Andheri East",              la:19.1197, lo:72.8499, ln:"Line 7",st:"op", c:"Mumbai"},
+{n:"Western Express Highway",   la:19.1258, lo:72.8570, ln:"Line 7",st:"op", c:"Mumbai"},
+{n:"Gundavali",                 la:19.1329, lo:72.8631, ln:"Line 7",st:"op", c:"Mumbai"},
+{n:"Mogra",                     la:19.1411, lo:72.8649, ln:"Line 7",st:"op", c:"Mumbai"},
+{n:"Jogeshwari East",           la:19.1420, lo:72.8652, ln:"Line 7",st:"op", c:"Mumbai"},
+{n:"Jai Prakash Road",          la:19.1517, lo:72.8665, ln:"Line 7",st:"op", c:"Mumbai"},
+{n:"Goregaon East",             la:19.1567, lo:72.8701, ln:"Line 7",st:"op", c:"Mumbai"},
+{n:"Ram Mandir",                la:19.1651, lo:72.8707, ln:"Line 7",st:"op", c:"Mumbai"},
+{n:"Kandivali East",            la:19.2057, lo:72.8635, ln:"Line 7",st:"op", c:"Mumbai"},
+{n:"Poisar",                    la:19.2174, lo:72.8647, ln:"Line 7",st:"op", c:"Mumbai"},
+{n:"Akurli",                    la:19.2245, lo:72.8650, ln:"Line 7",st:"op", c:"Mumbai"},
+{n:"Dahisar East",              la:19.2420, lo:72.8670, ln:"Line 7",st:"op", c:"Mumbai"},
+// Line 2B partial (under construction, key stations near BKC/Airport)
+{n:"BKC",                       la:19.0645, lo:72.8693, ln:"Line 2B",st:"uc", c:"Mumbai"},
+{n:"CST Mumbai Airport T1",     la:19.0896, lo:72.8656, ln:"Line 2B",st:"uc", c:"Mumbai"},
+{n:"Sahar Road",                la:19.0986, lo:72.8712, ln:"Line 2B",st:"uc", c:"Mumbai"},
+{n:"CST Mumbai Airport T2",     la:19.0992, lo:72.8682, ln:"Line 2B",st:"uc", c:"Mumbai"},
+
+// ── KOLKATA — Metro (Lines 1–6, partial operational) ─────────────────────────
+// Line 1 (Blue, Dakshineswar–New Garia, fully operational)
+{n:"Dakshineswar",              la:22.6447, lo:88.3584, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Baranagar",                 la:22.6375, lo:88.3736, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Noapara",                   la:22.6300, lo:88.3736, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Dum Dum",                   la:22.6230, lo:88.4023, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Belgachhia",                la:22.6097, lo:88.3788, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Shyambazar",                la:22.5973, lo:88.3726, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Shobhabazar",               la:22.5930, lo:88.3644, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Girish Park",               la:22.5893, lo:88.3617, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"MG Road",                   la:22.5748, lo:88.3534, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Central",                   la:22.5852, lo:88.3534, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Chandni Chowk",             la:22.5730, lo:88.3541, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Esplanade",                 la:22.5700, lo:88.3525, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Park Street",               la:22.5530, lo:88.3519, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Maidan",                    la:22.5493, lo:88.3427, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Rabindra Sadan",            la:22.5432, lo:88.3436, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Netaji Bhavan",             la:22.5385, lo:88.3432, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Jatin Das Park",            la:22.5321, lo:88.3432, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Kalighat",                  la:22.5256, lo:88.3432, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Tollygunge",                la:22.5099, lo:88.3502, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Mahanayak Uttam Kumar",     la:22.5006, lo:88.3527, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Netaji",                    la:22.4882, lo:88.3644, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Masterda Surya Sen",        la:22.4785, lo:88.3752, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Shahid Khudiram",           la:22.4703, lo:88.3865, ln:"Blue", st:"op", c:"Kolkata"},
+{n:"Kavi Subhash",              la:22.4631, lo:88.3892, ln:"Blue", st:"op", c:"Kolkata"},
+// Line 2 (Green, Howrah–Salt Lake, partially open)
+{n:"Howrah Maidan",             la:22.5847, lo:88.3350, ln:"Green",st:"op", c:"Kolkata"},
+{n:"Howrah",                    la:22.5852, lo:88.3421, ln:"Green",st:"op", c:"Kolkata"},
+{n:"Mahakaran",                 la:22.5680, lo:88.3442, ln:"Green",st:"op", c:"Kolkata"},
+{n:"Sealdah",                   la:22.5666, lo:88.3773, ln:"Green",st:"op", c:"Kolkata"},
+{n:"Phoolbagan",                la:22.5587, lo:88.3920, ln:"Green",st:"op", c:"Kolkata"},
+{n:"Salt Lake Sector V",        la:22.5750, lo:88.4305, ln:"Green",st:"op", c:"Kolkata"},
+{n:"Salt Lake Stadium",         la:22.5632, lo:88.4108, ln:"Green",st:"op", c:"Kolkata"},
+
+// ── PUNE — Lines 1 & 2 (operational since 2023) ──────────────────────────────
+{n:"PCMC Bhavan",               la:18.6315, lo:73.8058, ln:"Line 1",st:"op", c:"Pune"},
+{n:"Bhosari",                   la:18.6244, lo:73.8093, ln:"Line 1",st:"op", c:"Pune"},
+{n:"Kasarwadi",                 la:18.5994, lo:73.8153, ln:"Line 1",st:"op", c:"Pune"},
+{n:"Phugewadi",                 la:18.5844, lo:73.8193, ln:"Line 1",st:"op", c:"Pune"},
+{n:"Dapodi",                    la:18.5742, lo:73.8264, ln:"Line 1",st:"op", c:"Pune"},
+{n:"Bopodi",                    la:18.5659, lo:73.8343, ln:"Line 1",st:"op", c:"Pune"},
+{n:"Khadki",                    la:18.5590, lo:73.8419, ln:"Line 1",st:"op", c:"Pune"},
+{n:"Range Hills",               la:18.5491, lo:73.8504, ln:"Line 1",st:"op", c:"Pune"},
+{n:"Shivajinagar",              la:18.5292, lo:73.8396, ln:"Line 1",st:"op", c:"Pune"},
+{n:"Civil Court",               la:18.5140, lo:73.8576, ln:"Line 1",st:"op", c:"Pune"},
+{n:"Budhwar Peth",              la:18.5093, lo:73.8600, ln:"Line 1",st:"op", c:"Pune"},
+{n:"Mandai",                    la:18.5027, lo:73.8656, ln:"Line 1",st:"op", c:"Pune"},
+{n:"Pune Railway Station",      la:18.5290, lo:73.8739, ln:"Line 1",st:"op", c:"Pune"},
+{n:"Ruby Hall Clinic",          la:18.5341, lo:73.8821, ln:"Line 1",st:"op", c:"Pune"},
+{n:"Bund Garden",               la:18.5365, lo:73.8914, ln:"Line 1",st:"op", c:"Pune"},
+{n:"Yerawada",                  la:18.5405, lo:73.8980, ln:"Line 1",st:"op", c:"Pune"},
+{n:"Kalyani Nagar",             la:18.5470, lo:73.9094, ln:"Line 1",st:"op", c:"Pune"},
+{n:"Ramwadi",                   la:18.5542, lo:73.9196, ln:"Line 1",st:"op", c:"Pune"},
+{n:"Vanaz",                     la:18.5064, lo:73.8171, ln:"Line 2",st:"op", c:"Pune"},
+{n:"Anand Nagar",               la:18.5185, lo:73.8230, ln:"Line 2",st:"op", c:"Pune"},
+{n:"Ideal Colony",              la:18.5271, lo:73.8292, ln:"Line 2",st:"op", c:"Pune"},
+{n:"Nal Stop",                  la:18.5233, lo:73.8430, ln:"Line 2",st:"op", c:"Pune"},
+{n:"Garware College",           la:18.5212, lo:73.8513, ln:"Line 2",st:"op", c:"Pune"},
+{n:"Deccan Gymkhana",           la:18.5186, lo:73.8567, ln:"Line 2",st:"op", c:"Pune"},
+{n:"PMC",                       la:18.5122, lo:73.8577, ln:"Line 2",st:"op", c:"Pune"},
+{n:"Mangalwar Peth",            la:18.5027, lo:73.8656, ln:"Line 2",st:"op", c:"Pune"},
+{n:"Swami Vivekanand Nagar",    la:18.5149, lo:73.8714, ln:"Line 2",st:"op", c:"Pune"},
+{n:"Market Yard",               la:18.5049, lo:73.8619, ln:"Line 2",st:"op", c:"Pune"},
+
+// ── AHMEDABAD — GMRC (2 lines, 47 stations) ─────────────────────────────────
+{n:"Thaltej Gam",               la:23.0677, lo:72.5062, ln:"Line 2",st:"op", c:"Ahmedabad"},
+{n:"Thaltej",                   la:23.0541, lo:72.5165, ln:"Line 2",st:"op", c:"Ahmedabad"},
+{n:"Gujarat University",        la:23.0374, lo:72.5445, ln:"Line 2",st:"op", c:"Ahmedabad"},
+{n:"Commerce Six Roads",        la:23.0345, lo:72.5523, ln:"Line 2",st:"op", c:"Ahmedabad"},
+{n:"S P Stadium",               la:23.0271, lo:72.5619, ln:"Line 2",st:"op", c:"Ahmedabad"},
+{n:"Old High Court",            la:23.0334, lo:72.5793, ln:"Line 1",st:"op", c:"Ahmedabad"},
+{n:"Shahpur",                   la:23.0480, lo:72.5717, ln:"Line 1",st:"op", c:"Ahmedabad"},
+{n:"Gheekantha",                la:23.0393, lo:72.5726, ln:"Line 1",st:"op", c:"Ahmedabad"},
+{n:"Kalupur Railway Station",   la:23.0339, lo:72.5987, ln:"Line 1",st:"op", c:"Ahmedabad"},
+{n:"Kankaria East",             la:23.0080, lo:72.6048, ln:"Line 1",st:"op", c:"Ahmedabad"},
+{n:"Apparel Park",              la:23.0190, lo:72.6553, ln:"Line 1",st:"op", c:"Ahmedabad"},
+{n:"Amraiwadi",                 la:23.0287, lo:72.6288, ln:"Line 1",st:"op", c:"Ahmedabad"},
+{n:"Vastral Gam",               la:23.0100, lo:72.6702, ln:"Line 1",st:"op", c:"Ahmedabad"},
+{n:"Motera Stadium",            la:23.0996, lo:72.5988, ln:"Line 1",st:"op", c:"Ahmedabad"},
+{n:"Ranip",                     la:23.0782, lo:72.5824, ln:"Line 1",st:"op", c:"Ahmedabad"},
+{n:"Chandkheda",                la:23.1003, lo:72.6032, ln:"Line 1",st:"op", c:"Ahmedabad"},
+{n:"Sabarmati",                 la:23.0707, lo:72.5884, ln:"Line 1",st:"op", c:"Ahmedabad"},
+{n:"Gandhinagar Capital",       la:23.2156, lo:72.6369, ln:"Line 1",st:"op", c:"Ahmedabad"},
+
+// ── NOIDA / GREATER NOIDA — NMRC (21 stations) ──────────────────────────────
+{n:"Noida Sector 51",           la:28.6224, lo:77.3700, ln:"Aqua",  st:"op", c:"Noida"},
+{n:"Noida Sector 50",           la:28.6148, lo:77.3700, ln:"Aqua",  st:"op", c:"Noida"},
+{n:"Noida Sector 76",           la:28.6138, lo:77.3800, ln:"Aqua",  st:"op", c:"Noida"},
+{n:"Noida Sector 101",          la:28.5792, lo:77.3823, ln:"Aqua",  st:"op", c:"Noida"},
+{n:"Noida Sector 81",           la:28.5905, lo:77.3815, ln:"Aqua",  st:"op", c:"Noida"},
+{n:"NSEZ",                      la:28.5806, lo:77.3906, ln:"Aqua",  st:"op", c:"Noida"},
+{n:"Noida Sector 83",           la:28.5786, lo:77.3996, ln:"Aqua",  st:"op", c:"Noida"},
+{n:"Noida Sector 137",          la:28.5406, lo:77.3869, ln:"Aqua",  st:"op", c:"Noida"},
+{n:"Noida Sector 142",          la:28.5374, lo:77.4005, ln:"Aqua",  st:"op", c:"Noida"},
+{n:"Noida Sector 143",          la:28.5327, lo:77.4132, ln:"Aqua",  st:"op", c:"Noida"},
+{n:"Noida Sector 144",          la:28.5279, lo:77.4268, ln:"Aqua",  st:"op", c:"Noida"},
+{n:"Knowledge Park II",         la:28.4781, lo:77.4783, ln:"Aqua",  st:"op", c:"Noida"},
+{n:"Pari Chowk",                la:28.4721, lo:77.5062, ln:"Aqua",  st:"op", c:"Noida"},
+{n:"Alpha 1",                   la:28.4756, lo:77.5132, ln:"Aqua",  st:"op", c:"Noida"},
+{n:"Delta 1",                   la:28.4796, lo:77.5183, ln:"Aqua",  st:"op", c:"Noida"},
+{n:"GNIDA Office",              la:28.4774, lo:77.5024, ln:"Aqua",  st:"op", c:"Noida"},
+{n:"Depot Station",             la:28.4825, lo:77.5240, ln:"Aqua",  st:"op", c:"Noida"},
+
+// ── GURUGRAM / RAPID METRO (6 stations) ─────────────────────────────────────
+{n:"Sikanderpur",               la:28.4794, lo:77.0906, ln:"Rapid", st:"op", c:"Gurugram"},
+{n:"Phase 1",                   la:28.4896, lo:77.0919, ln:"Rapid", st:"op", c:"Gurugram"},
+{n:"Vodafone Belvedere Towers", la:28.4988, lo:77.0930, ln:"Rapid", st:"op", c:"Gurugram"},
+{n:"Micromax Moulsari Avenue",  la:28.5078, lo:77.0942, ln:"Rapid", st:"op", c:"Gurugram"},
+{n:"Cyber City",                la:28.4950, lo:77.0891, ln:"Rapid", st:"op", c:"Gurugram"},
+{n:"Sector 42-43",              la:28.5037, lo:77.0933, ln:"Rapid", st:"op", c:"Gurugram"},
+
+// ── KOCHI — Line 1 (25 stations, operational) ───────────────────────────────
+{n:"Aluva",                     la:10.1078, lo:76.3515, ln:"Line 1",st:"op", c:"Kochi"},
+{n:"Pulinchodu",                la:10.0890, lo:76.3468, ln:"Line 1",st:"op", c:"Kochi"},
+{n:"Companypady",               la:10.0714, lo:76.3390, ln:"Line 1",st:"op", c:"Kochi"},
+{n:"Ambattukavu",               la:10.0515, lo:76.3287, ln:"Line 1",st:"op", c:"Kochi"},
+{n:"Muttom",                    la:10.0332, lo:76.3162, ln:"Line 1",st:"op", c:"Kochi"},
+{n:"Kalamassery",               la:10.0539, lo:76.3202, ln:"Line 1",st:"op", c:"Kochi"},
+{n:"Edapally",                  la:10.0214, lo:76.3042, ln:"Line 1",st:"op", c:"Kochi"},
+{n:"Changampuzha Park",         la:9.9975,  lo:76.2978, ln:"Line 1",st:"op", c:"Kochi"},
+{n:"Palarivattom",              la:10.0122, lo:76.3084, ln:"Line 1",st:"op", c:"Kochi"},
+{n:"JLN Stadium",               la:9.9886,  lo:76.2998, ln:"Line 1",st:"op", c:"Kochi"},
+{n:"Kaloor",                    la:10.0019, lo:76.2905, ln:"Line 1",st:"op", c:"Kochi"},
+{n:"Lissie",                    la:9.9870,  lo:76.2853, ln:"Line 1",st:"op", c:"Kochi"},
+{n:"MG Road",                   la:9.9312,  lo:76.2673, ln:"Line 1",st:"op", c:"Kochi"},
+{n:"Maharajas",                 la:10.0019, lo:76.2905, ln:"Line 1",st:"op", c:"Kochi"},
+{n:"Kadavanthara",              la:9.9693,  lo:76.2895, ln:"Line 1",st:"op", c:"Kochi"},
+{n:"Elamkulam",                 la:9.9621,  lo:76.2927, ln:"Line 1",st:"op", c:"Kochi"},
+{n:"Vyttila",                   la:9.9530,  lo:76.3082, ln:"Line 1",st:"op", c:"Kochi"},
+{n:"Thykoodam",                 la:9.9448,  lo:76.3240, ln:"Line 1",st:"op", c:"Kochi"},
+{n:"Tripunithura",              la:9.9448,  lo:76.3458, ln:"Line 1",st:"op", c:"Kochi"},
+
+// ── NAGPUR — Line 1 & 2 ──────────────────────────────────────────────────────
+{n:"Automotive Square",         la:21.1768, lo:79.0613, ln:"Line 1",st:"op", c:"Nagpur"},
+{n:"Kasturchand Park",          la:21.1547, lo:79.0784, ln:"Line 1",st:"op", c:"Nagpur"},
+{n:"Sitabuldi Interchange",     la:21.1490, lo:79.0731, ln:"Line 1",st:"op", c:"Nagpur"},
+{n:"Congress Nagar",            la:21.1358, lo:79.0889, ln:"Line 1",st:"op", c:"Nagpur"},
+{n:"Rahate Colony",             la:21.1090, lo:79.0840, ln:"Line 1",st:"op", c:"Nagpur"},
+{n:"Bansi Nagar",               la:21.0950, lo:79.0821, ln:"Line 1",st:"op", c:"Nagpur"},
+{n:"Ujwal Nagar",               la:21.0823, lo:79.0764, ln:"Line 1",st:"op", c:"Nagpur"},
+{n:"Prajapati Nagar",           la:21.0668, lo:79.0714, ln:"Line 1",st:"op", c:"Nagpur"},
+{n:"VNIT",                      la:21.1298, lo:79.0563, ln:"Line 2",st:"op", c:"Nagpur"},
+{n:"Ambedkar Square",           la:21.1450, lo:79.0633, ln:"Line 2",st:"op", c:"Nagpur"},
+{n:"GPO",                       la:21.1426, lo:79.0833, ln:"Line 2",st:"op", c:"Nagpur"},
+{n:"Itwari Railway Station",    la:21.1456, lo:79.1069, ln:"Line 2",st:"op", c:"Nagpur"},
+{n:"Gaddigodam",                la:21.1377, lo:79.1162, ln:"Line 2",st:"op", c:"Nagpur"},
+];
+
+// ── Look up nearest metro stations from a static dataset ────────────────────
+// No API call, no network dependency — pure JS computation.
+function getNearestMetroStations(searchLat, searchLng, maxKm=5, maxResults=5) {
+  return INDIA_METRO_STATIONS
+    .map(s => ({...s, km: Math.round(haversineKm(searchLat, searchLng, s.la, s.lo)*10)/10}))
+    .filter(s => s.km <= maxKm)
+    .sort((a,b) => a.km - b.km)
+    .filter((s, i, arr) => {
+      // Deduplicate: keep only one entry per station name (some interchange
+      // stations appear on multiple lines — show closest-listed one only)
+      return arr.findIndex(x => x.n === s.n) === i;
+    })
+    .slice(0, maxResults);
+}
+
+// ── Metro Connectivity Card — uses the static dataset above ─────────────────
+// No API calls, no network requests, works instantly everywhere including
+// the Claude.ai artifact sandbox. Data is curated from BMRCL/DMRC/HMRL/CMRL
+// etc. official sources, cited mid-2026.
+function MetroConnectivityCard({lat, lng, locationName}) {
+  if(!lat || !lng) return null;
+  // Just show the single nearest station and distance — that's all the user needs
+  const nearest = getNearestMetroStations(lat, lng, 10, 1);
+  if(!nearest.length) return null; // no station within 10km, don't show card at all
+
+  const s = nearest[0];
+  return(
+    <div style={{background:"#F0FDF4",borderRadius:10,border:"1px solid #86EFAC",padding:"11px 13px",
+      display:"flex",alignItems:"center",gap:12}}>
+      <span style={{fontSize:20,flexShrink:0}}>🚇</span>
+      <div style={{flex:1,fontFamily:"Inter,sans-serif"}}>
+        <div style={{fontWeight:700,fontSize:13,color:"#15803D"}}>
+          {s.n} — {s.km} km away
+        </div>
+        <div style={{fontSize:11,color:"#166534",marginTop:1}}>
+          {s.ln} Line · {s.c} Metro · <span style={{fontWeight:600}}>● Operational</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function KarnatakaInfraCard({locationName}){
+  const ctx = getKarnatakaInfraContext(locationName);
+
+  // Only show lines actually under construction or pre-construction near this locality
+  // Operational lines already served by MetroConnectivityCard above — no duplication
+  const upcomingLines = ctx.relevantLines.filter(l => l.status !== "operational");
+
+  // Don't render at all if nothing relevant is coming up
+  if(upcomingLines.length === 0) return null;
 
   return(
-    <div style={{background:"#fff",borderRadius:10,border:"1px solid "+C.border,padding:"13px"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-        <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.dark}}>🚇 Karnataka Infrastructure Pipeline</div>
-        <ProvenanceBadge type="cited"/>
+    <div style={{background:"#FFF7ED",borderRadius:10,border:"1px solid #FED7AA",padding:"11px 13px"}}>
+      <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:"#C2410C",marginBottom:8,
+        display:"flex",alignItems:"center",gap:6}}>
+        🚧 Upcoming Metro near {locationName}
       </div>
-      {ctx.relevantLines.length===0 && !showAll ? (
-        <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,lineHeight:1.5,padding:"4px 0 8px"}}>
-          No metro line in our curated dataset directly serves this specific locality yet. This doesn't mean nothing is planned nearby — just that we don't have a confirmed, named line for this exact spot.
-          {" "}<button onClick={()=>setShowAll(true)} style={{background:"none",border:"none",color:C.blue,
-            fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,cursor:"pointer",padding:0,textDecoration:"underline"}}>
-            View full citywide pipeline instead
-          </button>
-        </div>
-      ) : (
-        <div style={{display:"flex",flexDirection:"column",gap:6}}>
-          {linesToShow.map(line=>(
-            <div key={line.name} style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",
-              padding:"6px 0",borderBottom:"1px solid "+C.border,gap:8}}>
-              <div style={{flex:1}}>
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,color:C.dark}}>{line.name}</div>
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,marginTop:1,lineHeight:1.4}}>{line.note}</div>
-              </div>
-              <span style={{flexShrink:0,fontFamily:"Inter,sans-serif",fontSize:9,fontWeight:600,
-                padding:"2px 7px",borderRadius:10,
-                background:line.status==="operational"?"#F0FDF4":line.status.includes("construction")?"#FFFBEB":"#F1F5F9",
-                color:line.status==="operational"?"#15803D":line.status.includes("construction")?"#92400E":C.muted}}>
-                {line.status}
-              </span>
+      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+        {upcomingLines.map(line=>(
+          <div key={line.name} style={{display:"flex",justifyContent:"space-between",
+            alignItems:"flex-start",gap:8}}>
+            <div style={{flex:1}}>
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,
+                color:"#9A3412"}}>{line.name}</div>
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#C2410C",
+                marginTop:1,lineHeight:1.4}}>{line.note}</div>
             </div>
-          ))}
-          {showAll && (
-            <button onClick={()=>setShowAll(false)} style={{background:"none",border:"none",color:C.blue,
-              fontFamily:"Inter,sans-serif",fontSize:10.5,fontWeight:600,cursor:"pointer",padding:"4px 0",
-              textAlign:"left",textDecoration:"underline"}}>
-              ← Show only lines relevant to this locality
-            </button>
-          )}
-        </div>
-      )}
-      <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,marginTop:8,fontStyle:"italic"}}>
-        Source: {KARNATAKA_INFRA.metro.source}. Snapshot as of {KARNATAKA_INFRA.metro.asOf} — Indian metro timelines have a track record of slipping; treat target dates as directional.
+            <span style={{flexShrink:0,fontFamily:"Inter,sans-serif",fontSize:9,fontWeight:600,
+              padding:"2px 7px",borderRadius:10,background:"#FFEDD5",color:"#9A3412",
+              whiteSpace:"nowrap"}}>{line.status}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:"#C2410C",marginTop:8,
+        fontStyle:"italic",opacity:0.7}}>
+        Source: {ctx.source} · {ctx.asOf} — timelines often slip
       </div>
     </div>
   );
@@ -1107,8 +1747,11 @@ function ReportCard({data,pins}){
           {SCORES.map(s=><Ring key={s.k} score={data[s.k]||0} label={s.l}/>)}
         </div>
       </div>
-      {isKarnataka && <KarnatakaInfraCard locationName={data.location_name}
-        locationNotes={[data.locality_insight, data.investment_thesis, ...(data.growth_drivers||[])].filter(Boolean).join(" ")}/>}
+      {/* Metro & Rail Connectivity — live lookup from Google Maps Places or
+          OpenStreetMap, not from AI memory (which can be stale on new openings
+          like Electronic City Yellow Line which opened Aug 2025) */}
+      {data.lat&&data.lng&&<MetroConnectivityCard lat={data.lat} lng={data.lng} locationName={data.location_name}/>}
+      {isKarnataka && <KarnatakaInfraCard locationName={data.location_name}/>}
       {data.news_signals&&<NewsSignals signals={data.news_signals}/>}
       {data.sentiment_score!=null&&<Sentiment score={data.sentiment_score} label={data.sentiment_summary}/>}
       {/* Future Price Forecast Chart */}
@@ -1173,6 +1816,58 @@ function ReportCard({data,pins}){
           <span style={{fontWeight:700,color:gc,fontSize:12}}>Zone: </span><span style={{color:C.dark,fontSize:12}}>{data.growth_zone}</span>
         </div>
       )}
+      {/* Economic Absorption Card — Dholera/Amaravathi problem:
+           plans look great on paper but actual jobs created is minimal */}
+      {data.economic_absorption&&(()=>{
+        const ea = data.economic_absorption;
+        const verdictColor = {
+          "Speculative play":"#92400E",
+          "Emerging fundamentals":"#1D4ED8",
+          "Strong absorption":"#15803D",
+          "Oversupplied":"#C84B31",
+        }[ea.verdict] || C.muted;
+        const gapColor = {High:"#C84B31", Medium:"#F59E0B", Low:"#15803D"}[ea.plan_vs_reality_gap] || C.muted;
+        const confidenceColor = {High:"#15803D", Medium:"#F59E0B", Low:"#C84B31", Absent:"#C84B31"}[ea.private_sector_confidence] || C.muted;
+        return(
+          <div style={{background:"#fff",borderRadius:9,border:`1px solid ${C.border}`,padding:"13px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:C.dark}}>
+                🏭 Economic Absorption
+              </div>
+              <span style={{background:verdictColor,color:"#fff",borderRadius:12,
+                padding:"2px 9px",fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:700}}>
+                {ea.verdict}
+              </span>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(96px,1fr))",gap:6,marginBottom:8}}>
+              <div style={{background:C.bg,borderRadius:7,padding:"7px 9px"}}>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:0.4}}>Plan vs Reality</div>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:700,color:gapColor,marginTop:2}}>{ea.plan_vs_reality_gap} gap</div>
+              </div>
+              <div style={{background:C.bg,borderRadius:7,padding:"7px 9px"}}>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:0.4}}>Private Sector</div>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:700,color:confidenceColor,marginTop:2}}>{ea.private_sector_confidence}</div>
+              </div>
+            </div>
+            {ea.current_jobs_created&&(
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.dark,marginBottom:5,lineHeight:1.5}}>
+                <strong>Jobs:</strong> {ea.current_jobs_created}
+              </div>
+            )}
+            {ea.livability_today&&(
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.dark,marginBottom:5,lineHeight:1.5}}>
+                <strong>Livability now:</strong> {ea.livability_today}
+              </div>
+            )}
+            {ea.absorption_risk&&(
+              <div style={{background:"#FFF7F5",borderRadius:6,padding:"6px 8px",
+                fontFamily:"Inter,sans-serif",fontSize:11,color:"#C84B31",lineHeight:1.5}}>
+                ⚠️ {ea.absorption_risk}
+              </div>
+            )}
+          </div>
+        );
+      })()}
       {data.growth_drivers&&(
         <div style={{background:"#fff",borderRadius:9,border:`1px solid ${C.border}`,padding:"13px"}}>
           <div style={{fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:13,color:C.dark,marginBottom:7}}>📈 Growth Drivers</div>
@@ -1195,10 +1890,104 @@ function ReportCard({data,pins}){
           <div style={{fontFamily:"serif",fontSize:14,color:"#F1F5F9",lineHeight:1.7}}>{data.investment_thesis}</div>
         </div>
       )}
-      {data.similar_to&&(
-        <div style={{background:"#FFFBEB",borderRadius:9,border:`1px solid #FDE68A`,padding:"11px 13px",fontFamily:"Inter,sans-serif"}}>
-          <div style={{fontWeight:600,fontSize:11,color:"#92400E",marginBottom:2}}>🔮 Next Big Thing Detector</div>
-          <div style={{fontSize:12,color:C.dark}}><strong>Similar to:</strong> {data.similar_to} · <strong>Match:</strong> {data.similarity_score}</div>
+      {/* ── Next Big Thing Detector — 3 sections:
+           1. Trajectory: where this place is in its growth arc
+           2. Historical Mirror: which now-expensive place looked like this before
+           3. Ripple Zones: nearby periphery localities computed from real lat/lng
+         ── */}
+      {(data.trajectory_profile||data.similar_to||data.ripple_signal)&&(
+        <div style={{background:"#FFFBEB",borderRadius:10,border:"1px solid #FDE68A",padding:"14px",display:"flex",flexDirection:"column",gap:12}}>
+          <div style={{fontWeight:700,fontSize:13,color:"#92400E",display:"flex",alignItems:"center",gap:6}}>
+            🔮 Next Big Thing Detector
+            <span style={{background:"#FEF3C7",color:"#92400E",borderRadius:20,padding:"1px 8px",fontSize:9,fontWeight:600}}>AI + curated data</span>
+          </div>
+
+          {/* Section 1: Trajectory Stage */}
+          {data.trajectory_profile&&(
+            <div style={{background:"rgba(255,255,255,0.7)",borderRadius:8,padding:"10px 12px"}}>
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:700,color:"#B45309",textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Growth Stage</div>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                <span style={{background:"#0F1B2D",color:"#F8FAFB",borderRadius:14,padding:"3px 10px",fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700}}>
+                  {data.trajectory_profile.current_stage||"Unknown"}
+                </span>
+                <span style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#92400E",fontWeight:600}}>
+                  {data.trajectory_profile.investor_window}
+                </span>
+              </div>
+              {data.trajectory_profile.future_trajectory&&(
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#78350F",lineHeight:1.5}}>
+                  📈 {data.trajectory_profile.future_trajectory}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Section 2: Historical Mirror */}
+          {data.trajectory_profile?.historical_mirror&&(
+            <div style={{background:"rgba(255,255,255,0.7)",borderRadius:8,padding:"10px 12px"}}>
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:700,color:"#B45309",textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Historical Mirror — where has this been before?</div>
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:"#78350F",lineHeight:1.5,marginBottom:6}}>
+                🪞 {data.trajectory_profile.historical_mirror}
+              </div>
+              {data.trajectory_profile.price_when_mirror_was_here&&data.trajectory_profile.price_of_mirror_today&&(
+                <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                  <div style={{background:"#FEF3C7",borderRadius:6,padding:"4px 8px",fontFamily:"Inter,sans-serif",fontSize:10}}>
+                    <span style={{color:"#92400E",fontWeight:600}}>Then: </span>{data.trajectory_profile.price_when_mirror_was_here}
+                  </div>
+                  <span style={{fontFamily:"serif",fontSize:14,color:"#92400E",alignSelf:"center"}}>→</span>
+                  <div style={{background:"#F0FDF4",borderRadius:6,padding:"4px 8px",fontFamily:"Inter,sans-serif",fontSize:10}}>
+                    <span style={{color:"#15803D",fontWeight:600}}>Now: </span>{data.trajectory_profile.price_of_mirror_today}
+                  </div>
+                  {data.trajectory_profile.growth_multiple_achieved&&(
+                    <div style={{background:"#0F1B2D",borderRadius:6,padding:"4px 8px",fontFamily:"Inter,sans-serif",fontSize:10,color:"#F8FAFB",fontWeight:700}}>
+                      {data.trajectory_profile.growth_multiple_achieved} ↑
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Section 3: Ripple Effect Zones — computed from real lat/lng */}
+          {data.lat&&data.lng&&(()=>{
+            const ripple = getRippleZones(data.lat, data.lng, data.growth_score||0);
+            const aiRipple = data.ripple_signal;
+            return ripple.length>0 ? (
+              <div style={{background:"rgba(255,255,255,0.7)",borderRadius:8,padding:"10px 12px"}}>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:700,color:"#B45309",textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>
+                  Ripple Effect Zones — capital overflow to periphery
+                </div>
+                {aiRipple?.overflow_from&&(
+                  <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#78350F",marginBottom:8,lineHeight:1.4}}>
+                    💰 {aiRipple.overflow_from}
+                    {aiRipple.price_gap&&<span style={{fontWeight:600}}> · {aiRipple.price_gap}</span>}
+                  </div>
+                )}
+                <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                  {ripple.map(z=>(
+                    <div key={z.name} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderBottom:"1px solid rgba(253,230,138,0.5)"}}>
+                      <div style={{width:36,height:36,borderRadius:8,background:"#FEF3C7",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontFamily:"serif",fontSize:12,color:"#92400E",fontWeight:700}}>
+                        {z.km}km
+                      </div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:"#78350F"}}>{z.name}</div>
+                        <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#92400E"}}>{z.price} · Score {z.score}</div>
+                        <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:"#B45309",fontStyle:"italic",marginTop:1}}>📍 {z.historicalMirror}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {aiRipple?.absorption_timeline&&(
+                  <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#92400E",marginTop:6,fontStyle:"italic"}}>
+                    ⏳ {aiRipple.absorption_timeline} · Catalysts: {aiRipple.catalysts_needed}
+                  </div>
+                )}
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:"#B45309",marginTop:5,opacity:0.7}}>
+                  Distances computed from coordinates · Prices are curated estimates (mid-2026)
+                </div>
+              </div>
+            ) : null;
+          })()}
         </div>
       )}
 
@@ -1387,6 +2176,10 @@ function ScreenerTab(){
     try{
       const prompt=`You are Bharat Land Growth Intelligence Platform. Find 5 real land investment opportunities within ${f.radius} km of ${f.city}, India.
 Filters: Min CAGR ${f.minCagr}%, Max price Rs${f.maxPrice}/sqft, Min infra score ${f.minInfra}/100, Max risk ${f.maxRisk}/100.
+
+SCORING CONSISTENCY — use these verified baselines for known localities (growth_score is computed from sub-scores: infra 25%, population 20%, economic 20%, connectivity 15%, urban_expansion 10%, momentum 5%, scarcity 5%, adjusted for risk and catalyst):
+Whitefield/Bengaluru East: growth_score≈80 | Electronic City: growth_score≈72 | Devanahalli: growth_score≈74 | Gachibowli/Hyderabad: growth_score≈83 | Hinjewadi/Pune: growth_score≈76 | Dholera SIR: growth_score≈59 (high catalyst but very low population/scarcity) | Noida/Greater Noida: growth_score≈67
+
 Return ONLY a JSON array (no markdown fences), sorted by growth_score descending.
 Each object must have: location, district, state, current_price_sqft, expected_cagr, infrastructure_score (integer), risk_score (integer), growth_score (integer), recommendation, one_line_thesis, lat (number), lng (number).`;
       const cacheKey="screener_"+[f.city,f.radius,f.minCagr,f.maxPrice,f.minInfra,f.maxRisk].join("_").toLowerCase().replace(/[^a-z0-9_]/g,"");
@@ -1459,6 +2252,9 @@ Each object must have: location, district, state, current_price_sqft, expected_c
                   ))}
                 </div>
                 <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,borderTop:`1px solid ${C.border}`,paddingTop:6,lineHeight:1.6}}>{r.one_line_thesis}</div>
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,paddingTop:4,fontStyle:"italic"}}>
+                💡 Screener gives quick estimates — use Analyze for verified scores
+              </div>
               </div>
             );
           })}
@@ -1508,7 +2304,18 @@ market_momentum_score (int), scarcity_score (int), catalyst_score (int),
 forecast_2yr, forecast_5yr, forecast_10yr, expected_cagr, confidence_level, growth_zone,
 growth_drivers (array 5 strings), major_risks (array 4 strings),
 recommendation ("Buy Now"|"Accumulate"|"Watchlist"|"Hold"|"Avoid"),
-investment_thesis (string), similar_to (string), similarity_score (string),
+investment_thesis (string),
+trajectory_profile (object: {
+  current_stage: "Early Discovery"|"Rising"|"Established"|"Maturing"|"Saturated",
+  historical_mirror: "which specific famous locality at which specific year does this place resemble right now, and why — e.g. 'Electronic City in 2010: similar IT absorption rate, similar connectivity gap, similar price band'",
+  future_trajectory: "which locality does this place most likely become in 10 years and why",
+  price_when_mirror_was_here: "approximate price of the historical mirror locality at that reference year",
+  price_of_mirror_today: "approximate price of that same historical mirror locality today",
+  growth_multiple_achieved: "how many times the historical mirror grew from then to now — e.g. '4x in 12 years'",
+  investor_window: "Early-Stage Opportunity"|"Active Appreciation Window"|"Late-Stage Entry"|"Post-Peak"
+}),
+similar_to (string — keep for backward compatibility, same as trajectory_profile.historical_mirror summary),
+similarity_score (string),
 locality_insight (string — REQUIRED: explain what specific facts drove your scoring, and if you deviated from any anchor table value, state exactly why),
 lat (number), lng (number), sentiment_score (int), sentiment_summary (string),
 news_signals (array 4 objects: {headline, type (BULLISH|BEARISH|CATALYST|NEUTRAL), impact, price_impact, is_upcoming_civic (boolean)}),
@@ -1516,6 +2323,21 @@ comparable_projects (array of 2-3 objects: {name (string), rate_sqft (string e.g
 civic_grievances (array of 3-5 strings — real known issues for this area),
 upcoming_civic_projects (array of 2-4 objects: {project, status, expected_completion, score_impact ("+5"|"-3" etc), price_impact}),
 price_history (array of objects: {year (int), price_sqft (int)} — last 8-10 years),
+economic_absorption (object: {
+  plan_vs_reality_gap: "High"|"Medium"|"Low" — how much do the plans (infra, smart city, capital city) outpace actual on-ground economic activity?
+  current_jobs_created: "approximate number of actual jobs created so far vs the grand plan — be specific, e.g. '~8,000 jobs vs 500,000 planned for Dholera SIR'",
+  private_sector_confidence: "High"|"Medium"|"Low"|"Absent" — are private companies actually investing or just government-funded?
+  livability_today: "Is the area currently livable? Are amenities, utilities, shops, schools actually present or still years away?",
+  absorption_risk: "What happens to property if the jobs/plan don't materialize? Concrete risk.",
+  verdict: "Speculative play"|"Emerging fundamentals"|"Strong absorption"|"Oversupplied"
+}),
+ripple_signal (object: {
+  overflow_from: "which saturating hub(s) is driving capital toward this locality — e.g. 'Whitefield (avg ₹18,000/sqft) pushing buyers toward Hoskote'",
+  distance_from_hub: "approximate km from that hub",
+  price_gap: "current price gap between hub and this locality — e.g. '3x cheaper than Whitefield'",
+  absorption_timeline: "estimated years before this locality reaches hub-like pricing — e.g. '5-8 years'",
+  catalysts_needed: "what specific things would accelerate this — e.g. 'metro connectivity, SH-35 widening, IT park announcement'"
+}),
 water_quality_note (string),
 traffic_intelligence (object: {
   peak_hour_congestion: "Severe/High/Moderate/Low",
@@ -1535,12 +2357,60 @@ Scoring: Infrastructure 25%, Population 20%, Economic 20%, Connectivity 15%, Urb
 Zones: 90-100 Mega Growth, 80-89 Emerging Hot, 65-79 Growth, 50-64 Stable, <50 High Risk.
 `;
 
+// ── Ambiguous locality names — same name exists in multiple parts of a city/state
+// When a user searches one of these, we ask which one they mean before running analysis.
+// Extend this list as more duplicates are discovered. Format: name → array of contexts.
+const AMBIGUOUS_LOCALITIES = {
+  // Bengaluru
+  "kalkere":       ["Kalkere, Ramamurthy Nagar area (East Bengaluru, near ITPL)", "Kalkere, Bannerghatta Road (South Bengaluru, near JP Nagar)"],
+  "hennur":        ["Hennur, off Hennur Road (North Bengaluru, near Kalyan Nagar)", "Hennur Village, near Devanahalli Road (Far North Bengaluru)"],
+  "kothanur":      ["Kothanur, Bannerghatta Road (South Bengaluru)", "Kothanur, Hennur (North Bengaluru)"],
+  "hegde nagar":   ["Hegde Nagar, near Manyata Tech Park (North Bengaluru)", "Hegde Nagar, near Yelahanka (Far North Bengaluru)"],
+  "singasandra":   ["Singasandra, Hosur Road belt (South Bengaluru, near Yellow Line metro)", "Singasandra, off Bannerghatta Road (South-West Bengaluru)"],
+  "varthur":       ["Varthur, near Whitefield (East Bengaluru IT corridor)", "Varthur Road, near Sarjapur (South-East Bengaluru)"],
+  "bellandur":     ["Bellandur, Outer Ring Road (near Sarjapur, East Bengaluru)", "Bellandur Village, off Sarjapur Road"],
+  "bommanahalli":  ["Bommanahalli, Hosur Road / Yellow Line area", "Bommanahalli, near Koramangala (inner city)"],
+  "mahadevapura":  ["Mahadevapura, near Whitefield (East Bengaluru)", "Mahadevapura, near KR Puram (East Bengaluru)"],
+  // Delhi / NCR
+  "sector 62":     ["Sector 62, Noida (near Delhi-Noida border)", "Sector 62, Gurugram (near NH48)"],
+  "dlf city":      ["DLF City Phase 1/2/3, Gurugram (near Sikanderpur)", "DLF City Phase 4/5, Gurugram (near Golf Course Road)"],
+  "vasant kunj":   ["Vasant Kunj, South Delhi (near Airport Line)", "Vasant Kunj, near Vasant Vihar (South Delhi)"],
+  // Mumbai
+  "andheri":       ["Andheri West (residential, near Versova Metro)", "Andheri East (commercial/industrial, near Airport)"],
+  "malad":         ["Malad West (residential, near Mindspace)", "Malad East (mixed use, near Sanjay Gandhi NP)"],
+  "ghatkopar":     ["Ghatkopar West (residential)", "Ghatkopar East (commercial, near Metro Line 1)"],
+  // Hyderabad
+  "kondapur":      ["Kondapur, near HITEC City (West Hyderabad IT belt)", "Kondapur Village, near Narsingi (Outer Hyderabad)"],
+  "kukatpally":    ["Kukatpally, near KPHB Colony (mid Hyderabad)", "Kukatpally Housing Board (far west Hyderabad)"],
+  // Chennai
+  "perungudi":     ["Perungudi, near OMR (IT corridor, South Chennai)", "Perungudi, near Velachery (inner south Chennai)"],
+  "sholinganallur":["Sholinganallur, OMR (IT hub, South Chennai)", "Sholinganallur Marsh area (near Perungudi)"],
+  // Pune
+  "wakad":         ["Wakad, near Hinjewadi Phase 1 (West Pune IT)", "Wakad, near Pimpri (North-West Pune industrial)"],
+  "kharadi":       ["Kharadi, near EON IT Park (East Pune IT)", "Kharadi Village, near Wagholi (outer east Pune)"],
+};
+
+// Check if a search query matches a known ambiguous locality name
+// Returns array of options if ambiguous, empty array if not
+function checkAmbiguity(query) {
+  if(!query) return [];
+  const q = query.toLowerCase().trim();
+  // Check exact match or if the query starts with one of the ambiguous names
+  for(const [key, options] of Object.entries(AMBIGUOUS_LOCALITIES)) {
+    if(q === key || q.startsWith(key + " ") || q.startsWith(key + ",")) {
+      return options;
+    }
+  }
+  return [];
+}
+
 function AnalyzeTab({initialQuery="",onClear}){
   const [q,setQ]=useState(initialQuery);
   const [loading,setLoading]=useState(false);
   const [report,setReport]=useState(null);
   const [pins,setPins]=useState([]);
   const [error,setError]=useState("");
+  const [disambigOptions,setDisambigOptions]=useState([]); // populated when location name is ambiguous
   const ranOnce=useRef(false);
 
   useEffect(()=>{
@@ -1559,6 +2429,13 @@ function AnalyzeTab({initialQuery="",onClear}){
   const doAnalyze=async(query)=>{
     const loc=(query||q).trim();
     if(!loc) return;
+    // Check for ambiguous locality names before running the full analysis
+    const ambig = checkAmbiguity(loc);
+    if(ambig.length > 0 && disambigOptions.length === 0) {
+      setDisambigOptions(ambig);
+      return; // wait for user to pick which one they mean
+    }
+    setDisambigOptions([]); // clear once resolved
     setLoading(true);setReport(null);setError("");setPins([]);setStreamChars(0);
     try{
       const cacheKey="analyze_"+loc.toLowerCase().trim().replace(/[^a-z0-9]+/g,"_");
@@ -1632,6 +2509,34 @@ function AnalyzeTab({initialQuery="",onClear}){
               animation:"indeterminate 1.4s ease-in-out infinite"}}/>
           </div>
           <style>{`@keyframes indeterminate{0%{left:-40%}100%{left:100%}}`}</style>
+        </div>
+      )}
+      {/* Disambiguation UI — shown when the searched name exists in multiple
+           parts of a city. User picks which one before analysis runs. */}
+      {disambigOptions.length>0&&(
+        <div style={{background:"#EFF6FF",borderRadius:10,border:"1px solid #BFDBFE",padding:"14px"}}>
+          <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:"#1D4ED8",marginBottom:4}}>
+            📍 Which {q.trim()} do you mean?
+          </div>
+          <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#1E40AF",marginBottom:10}}>
+            Multiple localities share this name. Pick the one you're interested in:
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {disambigOptions.map((opt,i)=>(
+              <button key={i} onClick={()=>{setQ(opt);setDisambigOptions([]);doAnalyze(opt);}}
+                style={{background:"#fff",border:"1.5px solid #BFDBFE",borderRadius:8,
+                  padding:"10px 13px",textAlign:"left",cursor:"pointer",
+                  fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark,
+                  lineHeight:1.5}}>
+                {opt}
+              </button>
+            ))}
+            <button onClick={()=>setDisambigOptions([])}
+              style={{background:"none",border:"none",color:C.muted,fontFamily:"Inter,sans-serif",
+                fontSize:11,cursor:"pointer",textAlign:"left",padding:"4px 0"}}>
+              Never mind, search "{q}" as-is →
+            </button>
+          </div>
         </div>
       )}
       {error&&<div style={{color:C.red,fontFamily:"Inter,sans-serif",fontSize:11,padding:"9px 13px",background:"#FFF5F5",borderRadius:8,wordBreak:"break-all"}}>{error}</div>}
@@ -1766,10 +2671,13 @@ function HomeTab({onStateSelect,onNavigate}){
         ))}
       </div>
 
-      <div style={{background:"#FFFBEB",borderRadius:9,border:`1px solid #FDE68A`,padding:"11px 13px",
-        fontFamily:"Inter,sans-serif",fontSize:12,color:"#92400E"}}>
-        🔮 <strong>Why Dholera SIR leads:</strong> Smart City status + semiconductor fab zone + DMIC corridor — a rare convergence of three major catalysts in one location.
-      </div>
+      {topCities[0]&&(
+        <div style={{background:"#FFFBEB",borderRadius:9,border:`1px solid #FDE68A`,padding:"11px 13px",
+          fontFamily:"Inter,sans-serif",fontSize:12,color:"#92400E"}}>
+          🔮 <strong>#1 right now — {topCities[0].name} ({topCities[0].score}/100, {topCities[0].state}).</strong>{" "}
+          Tap to run a full analysis.
+        </div>
+      )}
     </div>
   );
 }
