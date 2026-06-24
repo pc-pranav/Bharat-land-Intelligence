@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, Component } from "react";
+import React, { useState, useEffect, useRef, useMemo, Component } from "react";
 import GoogleMapView from "./components/GoogleMapView";
 
 // API endpoint: in this Claude.ai artifact preview, call Anthropic directly.
