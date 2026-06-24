@@ -1,0 +1,1547 @@
+{
+  "run_at": "2026-06-24T14:48:56.310809+00:00",
+  "stations_used": 173,
+  "projects_used": 45,
+  "regions": [
+    {
+      "state": "Karnataka",
+      "name": "Bengaluru East (Whitefield Belt)",
+      "lat": 12.97,
+      "lng": 77.75,
+      "base_score": 80,
+      "infra_score": 11.64,
+      "final_score": 78,
+      "breakdown": {
+        "station_score_raw": 1.3308,
+        "station_score_normalised": 33.27,
+        "project_score_raw": 0.0,
+        "project_score_normalised": 0,
+        "infra_score": 11.64,
+        "nearby_stations": [
+          {
+            "name": "Whitefield (Kadugodi)",
+            "city": "Bengaluru",
+            "dist_km": 2.02,
+            "status": "operational",
+            "contribution": 0.3307
+          },
+          {
+            "name": "Channasandra",
+            "city": "Bengaluru",
+            "dist_km": 4.47,
+            "status": "operational",
+            "contribution": 0.1827
+          },
+          {
+            "name": "Kadugodi Tree Park",
+            "city": "Bengaluru",
+            "dist_km": 5.54,
+            "status": "operational",
+            "contribution": 0.153
+          },
+          {
+            "name": "Hopefarm Channasandra",
+            "city": "Bengaluru",
+            "dist_km": 6.54,
+            "status": "operational",
+            "contribution": 0.1326
+          },
+          {
+            "name": "Krishnarajapura",
+            "city": "Bengaluru",
+            "dist_km": 7.01,
+            "status": "operational",
+            "contribution": 0.1249
+          }
+        ],
+        "nearby_projects": [
+          {
+            "name": "Namma Metro Yellow Line (RV Road–Bommasandra)",
+            "type": "metro",
+            "status": "operational",
+            "dist_km": 16.3,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Namma Metro Blue Line Phase 2A (Silk Board–KR Puram)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 10.72,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Namma Metro Blue Line Phase 2B (KR Puram–Airport)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 14.39,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Namma Metro Pink Line (Kalena Agrahara–Nagawara)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 15.33,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Namma Metro Orange Line Corridor 1 (JP Nagar–Kempapura)",
+            "type": "metro",
+            "status": "pre_construction",
+            "dist_km": 22.12,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "Karnataka",
+      "name": "Bengaluru North (Devanahalli/Airport)",
+      "lat": 13.24,
+      "lng": 77.71,
+      "base_score": 74,
+      "infra_score": 9.09,
+      "final_score": 71,
+      "breakdown": {
+        "station_score_raw": 0.1254,
+        "station_score_normalised": 3.13,
+        "project_score_raw": 3.6896,
+        "project_score_normalised": 12.3,
+        "infra_score": 9.09,
+        "nearby_stations": [
+          {
+            "name": "Kempegowda International Airport",
+            "city": "Bengaluru",
+            "dist_km": 4.58,
+            "status": "under_construction",
+            "contribution": 0.1254
+          }
+        ],
+        "nearby_projects": [
+          {
+            "name": "North Amalgamation Layout (BDA) — Devanahalli Planning Area",
+            "type": "smart_city",
+            "status": "approved",
+            "dist_km": 1.55,
+            "overlap_factor": 0.922,
+            "contribution": 3.6896
+          },
+          {
+            "name": "Namma Metro Yellow Line (RV Road–Bommasandra)",
+            "type": "metro",
+            "status": "operational",
+            "dist_km": 41.84,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Namma Metro Blue Line Phase 2A (Silk Board–KR Puram)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 34.89,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Namma Metro Blue Line Phase 2B (KR Puram–Airport)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 18.09,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Namma Metro Pink Line (Kalena Agrahara–Nagawara)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 34.02,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "Karnataka",
+      "name": "Bengaluru South (Electronic City)",
+      "lat": 12.85,
+      "lng": 77.66,
+      "base_score": 72,
+      "infra_score": 36.43,
+      "final_score": 72,
+      "breakdown": {
+        "station_score_raw": 3.913,
+        "station_score_normalised": 97.83,
+        "project_score_raw": 1.0098,
+        "project_score_normalised": 3.37,
+        "infra_score": 36.43,
+        "nearby_stations": [
+          {
+            "name": "Hosa Road",
+            "city": "Bengaluru",
+            "dist_km": 0.68,
+            "status": "operational",
+            "contribution": 0.5951
+          },
+          {
+            "name": "Electronic City",
+            "city": "Bengaluru",
+            "dist_km": 1.93,
+            "status": "operational",
+            "contribution": 0.3411
+          },
+          {
+            "name": "Singasandra",
+            "city": "Bengaluru",
+            "dist_km": 2.2,
+            "status": "operational",
+            "contribution": 0.3125
+          },
+          {
+            "name": "Infosys Foundation Konappana Agrahara",
+            "city": "Bengaluru",
+            "dist_km": 3.03,
+            "status": "operational",
+            "contribution": 0.2482
+          },
+          {
+            "name": "Kudlu Gate",
+            "city": "Bengaluru",
+            "dist_km": 3.61,
+            "status": "operational",
+            "contribution": 0.2169
+          }
+        ],
+        "nearby_projects": [
+          {
+            "name": "Hosur Expressway (Bengaluru–Hosur, 4-lane to 8-lane)",
+            "type": "expressway",
+            "status": "under_construction",
+            "dist_km": 8.56,
+            "overlap_factor": 0.144,
+            "contribution": 1.0098
+          },
+          {
+            "name": "Namma Metro Yellow Line (RV Road–Bommasandra)",
+            "type": "metro",
+            "status": "operational",
+            "dist_km": 3.11,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Namma Metro Blue Line Phase 2A (Silk Board–KR Puram)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 8.9,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Namma Metro Blue Line Phase 2B (KR Puram–Airport)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 25.67,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Namma Metro Pink Line (Kalena Agrahara–Nagawara)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 12.37,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "Karnataka",
+      "name": "Mysuru Region",
+      "lat": 12.3,
+      "lng": 76.64,
+      "base_score": 62,
+      "infra_score": 0.0,
+      "final_score": 57,
+      "breakdown": {
+        "station_score_raw": 0.0,
+        "station_score_normalised": 0,
+        "project_score_raw": 0.0,
+        "project_score_normalised": 0,
+        "infra_score": 0.0,
+        "nearby_stations": [],
+        "nearby_projects": []
+      }
+    },
+    {
+      "state": "Karnataka",
+      "name": "Mangaluru Coastal Belt",
+      "lat": 12.87,
+      "lng": 74.84,
+      "base_score": 58,
+      "infra_score": 0.0,
+      "final_score": 53,
+      "breakdown": {
+        "station_score_raw": 0.0,
+        "station_score_normalised": 0,
+        "project_score_raw": 0.0,
+        "project_score_normalised": 0,
+        "infra_score": 0.0,
+        "nearby_stations": [],
+        "nearby_projects": []
+      }
+    },
+    {
+      "state": "Karnataka",
+      "name": "Hubli-Dharwad",
+      "lat": 15.36,
+      "lng": 75.12,
+      "base_score": 54,
+      "infra_score": 0.0,
+      "final_score": 49,
+      "breakdown": {
+        "station_score_raw": 0.0,
+        "station_score_normalised": 0,
+        "project_score_raw": 0.0,
+        "project_score_normalised": 0,
+        "infra_score": 0.0,
+        "nearby_stations": [],
+        "nearby_projects": []
+      }
+    },
+    {
+      "state": "Maharashtra",
+      "name": "Mumbai Metropolitan Region",
+      "lat": 19.08,
+      "lng": 72.88,
+      "base_score": 72,
+      "infra_score": 19.48,
+      "final_score": 72,
+      "breakdown": {
+        "station_score_raw": 0.9344,
+        "station_score_normalised": 23.36,
+        "project_score_raw": 5.2177,
+        "project_score_normalised": 17.39,
+        "infra_score": 19.48,
+        "nearby_stations": [
+          {
+            "name": "Bkc",
+            "city": "Mumbai",
+            "dist_km": 2.06,
+            "status": "under_construction",
+            "contribution": 0.2289
+          },
+          {
+            "name": "Ghatkopar",
+            "city": "Mumbai",
+            "dist_km": 2.97,
+            "status": "operational",
+            "contribution": 0.2521
+          },
+          {
+            "name": "Andheri",
+            "city": "Mumbai",
+            "dist_km": 5.5,
+            "status": "operational",
+            "contribution": 0.1537
+          },
+          {
+            "name": "Goregaon East",
+            "city": "Mumbai",
+            "dist_km": 8.59,
+            "status": "operational",
+            "contribution": 0.1043
+          },
+          {
+            "name": "Versova",
+            "city": "Mumbai",
+            "dist_km": 8.79,
+            "status": "operational",
+            "contribution": 0.1022
+          }
+        ],
+        "nearby_projects": [
+          {
+            "name": "Mumbai Metro Line 2B (DN Nagar–Mankhurd)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 1.53,
+            "overlap_factor": 0.49,
+            "contribution": 3.4301
+          },
+          {
+            "name": "Navi Mumbai International Airport (NMIA)",
+            "type": "airport",
+            "status": "under_construction",
+            "dist_km": 22.34,
+            "overlap_factor": 0.255,
+            "contribution": 1.7876
+          },
+          {
+            "name": "Mumbai Metro Line 3 (Colaba–SEEPZ–BKC–Airport–Aarey)",
+            "type": "metro",
+            "status": "operational",
+            "dist_km": 3.5,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Mumbai–Pune Expressway Widening (6-lane to 8-lane)",
+            "type": "expressway",
+            "status": "under_construction",
+            "dist_km": 39.15,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Coastal Road Mumbai (Marine Lines–Worli Sea Link extension)",
+            "type": "highway",
+            "status": "under_construction",
+            "dist_km": 10.02,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "Maharashtra",
+      "name": "Pune East (Hinjewadi/Wakad)",
+      "lat": 18.59,
+      "lng": 73.74,
+      "base_score": 76,
+      "infra_score": 0.94,
+      "final_score": 71,
+      "breakdown": {
+        "station_score_raw": 0.1072,
+        "station_score_normalised": 2.68,
+        "project_score_raw": 0.0,
+        "project_score_normalised": 0,
+        "infra_score": 0.94,
+        "nearby_stations": [
+          {
+            "name": "Pcmc Bhavan",
+            "city": "Pune",
+            "dist_km": 8.33,
+            "status": "operational",
+            "contribution": 0.1072
+          }
+        ],
+        "nearby_projects": [
+          {
+            "name": "Pune Metro Phase 1 Extensions (Pimpri–Nigdi + Ramwadi–Wagholi)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 12.84,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "Maharashtra",
+      "name": "Navi Mumbai",
+      "lat": 19.03,
+      "lng": 73.02,
+      "base_score": 70,
+      "infra_score": 11.69,
+      "final_score": 68,
+      "breakdown": {
+        "station_score_raw": 0.0,
+        "station_score_normalised": 0,
+        "project_score_raw": 5.3933,
+        "project_score_normalised": 17.98,
+        "infra_score": 11.69,
+        "nearby_stations": [],
+        "nearby_projects": [
+          {
+            "name": "Navi Mumbai International Airport (NMIA)",
+            "type": "airport",
+            "status": "under_construction",
+            "dist_km": 6.89,
+            "overlap_factor": 0.77,
+            "contribution": 5.3933
+          },
+          {
+            "name": "Mumbai Metro Line 3 (Colaba–SEEPZ–BKC–Airport–Aarey)",
+            "type": "metro",
+            "status": "operational",
+            "dist_km": 15.92,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Mumbai Metro Line 2B (DN Nagar–Mankhurd)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 16.38,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Mumbai–Pune Expressway Widening (6-lane to 8-lane)",
+            "type": "expressway",
+            "status": "under_construction",
+            "dist_km": 23.82,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Coastal Road Mumbai (Marine Lines–Worli Sea Link extension)",
+            "type": "highway",
+            "status": "under_construction",
+            "dist_km": 21.14,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "Maharashtra",
+      "name": "Thane Belt",
+      "lat": 19.22,
+      "lng": 72.98,
+      "base_score": 66,
+      "infra_score": 1.38,
+      "final_score": 61,
+      "breakdown": {
+        "station_score_raw": 0.0,
+        "station_score_normalised": 0,
+        "project_score_raw": 0.6377,
+        "project_score_normalised": 2.13,
+        "infra_score": 1.38,
+        "nearby_stations": [],
+        "nearby_projects": [
+          {
+            "name": "Navi Mumbai International Airport (NMIA)",
+            "type": "airport",
+            "status": "under_construction",
+            "dist_km": 27.27,
+            "overlap_factor": 0.091,
+            "contribution": 0.6377
+          },
+          {
+            "name": "Mumbai Metro Line 3 (Colaba–SEEPZ–BKC–Airport–Aarey)",
+            "type": "metro",
+            "status": "operational",
+            "dist_km": 22.16,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Mumbai Metro Line 2B (DN Nagar–Mankhurd)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 20.29,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Mumbai–Pune Expressway Widening (6-lane to 8-lane)",
+            "type": "expressway",
+            "status": "under_construction",
+            "dist_km": 42.43,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Coastal Road Mumbai (Marine Lines–Worli Sea Link extension)",
+            "type": "highway",
+            "status": "under_construction",
+            "dist_km": 28.77,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "Maharashtra",
+      "name": "Nagpur Region",
+      "lat": 21.15,
+      "lng": 79.09,
+      "base_score": 55,
+      "infra_score": 7.8,
+      "final_score": 52,
+      "breakdown": {
+        "station_score_raw": 0.8911,
+        "station_score_normalised": 22.28,
+        "project_score_raw": 0.0,
+        "project_score_normalised": 0,
+        "infra_score": 7.8,
+        "nearby_stations": [
+          {
+            "name": "Kasturchand Park",
+            "city": "Nagpur",
+            "dist_km": 1.31,
+            "status": "operational",
+            "contribution": 0.4326
+          },
+          {
+            "name": "Sitabuldi Interchange",
+            "city": "Nagpur",
+            "dist_km": 1.76,
+            "status": "operational",
+            "contribution": 0.3628
+          },
+          {
+            "name": "Prajapati Nagar",
+            "city": "Nagpur",
+            "dist_km": 9.45,
+            "status": "operational",
+            "contribution": 0.0957
+          }
+        ],
+        "nearby_projects": []
+      }
+    },
+    {
+      "state": "Maharashtra",
+      "name": "Nashik Region",
+      "lat": 20.0,
+      "lng": 73.79,
+      "base_score": 56,
+      "infra_score": 0.0,
+      "final_score": 51,
+      "breakdown": {
+        "station_score_raw": 0.0,
+        "station_score_normalised": 0,
+        "project_score_raw": 0.0,
+        "project_score_normalised": 0,
+        "infra_score": 0.0,
+        "nearby_stations": [],
+        "nearby_projects": []
+      }
+    },
+    {
+      "state": "Tamil Nadu",
+      "name": "Chennai OMR Corridor",
+      "lat": 12.9,
+      "lng": 80.23,
+      "base_score": 70,
+      "infra_score": 7.61,
+      "final_score": 67,
+      "breakdown": {
+        "station_score_raw": 0.853,
+        "station_score_normalised": 21.32,
+        "project_score_raw": 0.0679,
+        "project_score_normalised": 0.23,
+        "infra_score": 7.61,
+        "nearby_stations": [
+          {
+            "name": "Sholinganallur",
+            "city": "Chennai",
+            "dist_km": 0.33,
+            "status": "operational",
+            "contribution": 0.7529
+          },
+          {
+            "name": "Velachery",
+            "city": "Chennai",
+            "dist_km": 8.99,
+            "status": "operational",
+            "contribution": 0.1001
+          }
+        ],
+        "nearby_projects": [
+          {
+            "name": "SIPCOT Industrial Complexes Expansion (12 locations TN)",
+            "type": "industrial_corridor",
+            "status": "under_construction",
+            "dist_km": 49.51,
+            "overlap_factor": 0.01,
+            "contribution": 0.0679
+          },
+          {
+            "name": "Chennai Metro Line 4 (Lighthouse–Poonamallee)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 15.9,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Chennai Metro Line 5 (Madhavaram–SIPCOT)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 24.56,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "Tamil Nadu",
+      "name": "Chennai West (Porur/Poonamallee)",
+      "lat": 13.04,
+      "lng": 80.16,
+      "base_score": 64,
+      "infra_score": 7.09,
+      "final_score": 61,
+      "breakdown": {
+        "station_score_raw": 0.8106,
+        "station_score_normalised": 20.26,
+        "project_score_raw": 0.0,
+        "project_score_normalised": 0,
+        "infra_score": 7.09,
+        "nearby_stations": [
+          {
+            "name": "Koyambedu",
+            "city": "Chennai",
+            "dist_km": 5.06,
+            "status": "operational",
+            "contribution": 0.1651
+          },
+          {
+            "name": "Chennai Airport",
+            "city": "Chennai",
+            "dist_km": 5.24,
+            "status": "operational",
+            "contribution": 0.1604
+          },
+          {
+            "name": "St Thomas Mount",
+            "city": "Chennai",
+            "dist_km": 6.08,
+            "status": "operational",
+            "contribution": 0.1413
+          },
+          {
+            "name": "Alandur",
+            "city": "Chennai",
+            "dist_km": 6.83,
+            "status": "operational",
+            "contribution": 0.1277
+          },
+          {
+            "name": "Anna Nagar Tower",
+            "city": "Chennai",
+            "dist_km": 7.37,
+            "status": "operational",
+            "contribution": 0.1195
+          }
+        ],
+        "nearby_projects": [
+          {
+            "name": "Chennai Metro Line 4 (Lighthouse–Poonamallee)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 4.33,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Chennai Metro Line 5 (Madhavaram–SIPCOT)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 13.2,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "Tamil Nadu",
+      "name": "Coimbatore Region",
+      "lat": 11.0,
+      "lng": 76.97,
+      "base_score": 56,
+      "infra_score": 15.17,
+      "final_score": 55,
+      "breakdown": {
+        "station_score_raw": 0.0,
+        "station_score_normalised": 0,
+        "project_score_raw": 7.0,
+        "project_score_normalised": 23.33,
+        "infra_score": 15.17,
+        "nearby_stations": [],
+        "nearby_projects": [
+          {
+            "name": "Coimbatore Ring Road (NH-544)",
+            "type": "ring_road",
+            "status": "under_construction",
+            "dist_km": 0.0,
+            "overlap_factor": 1.0,
+            "contribution": 7.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "Tamil Nadu",
+      "name": "Madurai Region",
+      "lat": 9.93,
+      "lng": 78.12,
+      "base_score": 50,
+      "infra_score": 0.0,
+      "final_score": 45,
+      "breakdown": {
+        "station_score_raw": 0.0,
+        "station_score_normalised": 0,
+        "project_score_raw": 0.0,
+        "project_score_normalised": 0,
+        "infra_score": 0.0,
+        "nearby_stations": [],
+        "nearby_projects": []
+      }
+    },
+    {
+      "state": "Tamil Nadu",
+      "name": "Tiruchirappalli Region",
+      "lat": 10.8,
+      "lng": 78.69,
+      "base_score": 48,
+      "infra_score": 0.0,
+      "final_score": 43,
+      "breakdown": {
+        "station_score_raw": 0.0,
+        "station_score_normalised": 0,
+        "project_score_raw": 0.0,
+        "project_score_normalised": 0,
+        "infra_score": 0.0,
+        "nearby_stations": [],
+        "nearby_projects": []
+      }
+    },
+    {
+      "state": "Telangana",
+      "name": "Hyderabad West (Gachibowli/HITEC City)",
+      "lat": 17.44,
+      "lng": 78.38,
+      "base_score": 83,
+      "infra_score": 17.35,
+      "final_score": 82,
+      "breakdown": {
+        "station_score_raw": 1.1999,
+        "station_score_normalised": 30.0,
+        "project_score_raw": 3.1634,
+        "project_score_normalised": 10.54,
+        "infra_score": 17.35,
+        "nearby_stations": [
+          {
+            "name": "Hitech City",
+            "city": "Hyderabad",
+            "dist_km": 0.93,
+            "status": "operational",
+            "contribution": 0.5178
+          },
+          {
+            "name": "Raidurg",
+            "city": "Hyderabad",
+            "dist_km": 1.91,
+            "status": "operational",
+            "contribution": 0.3433
+          },
+          {
+            "name": "Miyapur",
+            "city": "Hyderabad",
+            "dist_km": 7.1,
+            "status": "operational",
+            "contribution": 0.1235
+          },
+          {
+            "name": "Ameerpet",
+            "city": "Hyderabad",
+            "dist_km": 7.32,
+            "status": "operational",
+            "contribution": 0.1201
+          },
+          {
+            "name": "Begumpet",
+            "city": "Hyderabad",
+            "dist_km": 9.5,
+            "status": "operational",
+            "contribution": 0.0952
+          }
+        ],
+        "nearby_projects": [
+          {
+            "name": "Hyderabad Outer Ring Road (ORR) corridor development",
+            "type": "ring_road",
+            "status": "operational",
+            "dist_km": 5.47,
+            "overlap_factor": 0.316,
+            "contribution": 3.1634
+          },
+          {
+            "name": "Hyderabad Metro Phase 2 (Airport–Outer Ring Road extensions)",
+            "type": "metro",
+            "status": "approved",
+            "dist_km": 11.33,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Hyderabad–Nagpur Expressway (NH-44 Telangana section)",
+            "type": "expressway",
+            "status": "under_construction",
+            "dist_km": 24.27,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "Telangana",
+      "name": "Hyderabad North (Kompally/Medchal)",
+      "lat": 17.6,
+      "lng": 78.49,
+      "base_score": 66,
+      "infra_score": 0.0,
+      "final_score": 61,
+      "breakdown": {
+        "station_score_raw": 0.0,
+        "station_score_normalised": 0,
+        "project_score_raw": 0.0,
+        "project_score_normalised": 0,
+        "infra_score": 0.0,
+        "nearby_stations": [],
+        "nearby_projects": [
+          {
+            "name": "Hyderabad Metro Phase 2 (Airport–Outer Ring Road extensions)",
+            "type": "metro",
+            "status": "approved",
+            "dist_km": 28.52,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Hyderabad Outer Ring Road (ORR) corridor development",
+            "type": "ring_road",
+            "status": "operational",
+            "dist_km": 26.74,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Hyderabad–Nagpur Expressway (NH-44 Telangana section)",
+            "type": "expressway",
+            "status": "under_construction",
+            "dist_km": 16.11,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "Telangana",
+      "name": "Hyderabad South (Shamshabad)",
+      "lat": 17.24,
+      "lng": 78.43,
+      "base_score": 58,
+      "infra_score": 0.0,
+      "final_score": 53,
+      "breakdown": {
+        "station_score_raw": 0.0,
+        "station_score_normalised": 0,
+        "project_score_raw": 0.0,
+        "project_score_normalised": 0,
+        "infra_score": 0.0,
+        "nearby_stations": [],
+        "nearby_projects": [
+          {
+            "name": "Hyderabad Metro Phase 2 (Airport–Outer Ring Road extensions)",
+            "type": "metro",
+            "status": "approved",
+            "dist_km": 12.23,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Hyderabad Outer Ring Road (ORR) corridor development",
+            "type": "ring_road",
+            "status": "operational",
+            "dist_km": 19.71,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Hyderabad–Nagpur Expressway (NH-44 Telangana section)",
+            "type": "expressway",
+            "status": "under_construction",
+            "dist_km": 34.08,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "Telangana",
+      "name": "Warangal Region",
+      "lat": 18.0,
+      "lng": 79.58,
+      "base_score": 48,
+      "infra_score": 0.0,
+      "final_score": 43,
+      "breakdown": {
+        "station_score_raw": 0.0,
+        "station_score_normalised": 0,
+        "project_score_raw": 0.0,
+        "project_score_normalised": 0,
+        "infra_score": 0.0,
+        "nearby_stations": [],
+        "nearby_projects": []
+      }
+    },
+    {
+      "state": "Gujarat",
+      "name": "Ahmedabad-Gandhinagar Belt",
+      "lat": 23.03,
+      "lng": 72.58,
+      "base_score": 72,
+      "infra_score": 15.44,
+      "final_score": 71,
+      "breakdown": {
+        "station_score_raw": 1.3702,
+        "station_score_normalised": 34.26,
+        "project_score_raw": 1.5936,
+        "project_score_normalised": 5.31,
+        "infra_score": 15.44,
+        "nearby_stations": [
+          {
+            "name": "Old High Court",
+            "city": "Ahmedabad",
+            "dist_km": 0.38,
+            "status": "operational",
+            "contribution": 0.7221
+          },
+          {
+            "name": "Kalupur Railway Station",
+            "city": "Ahmedabad",
+            "dist_km": 1.96,
+            "status": "operational",
+            "contribution": 0.3376
+          },
+          {
+            "name": "Motera Stadium",
+            "city": "Ahmedabad",
+            "dist_km": 7.97,
+            "status": "operational",
+            "contribution": 0.1114
+          },
+          {
+            "name": "Thaltej Gam",
+            "city": "Ahmedabad",
+            "dist_km": 8.64,
+            "status": "operational",
+            "contribution": 0.1038
+          },
+          {
+            "name": "Vastral Gam",
+            "city": "Ahmedabad",
+            "dist_km": 9.5,
+            "status": "operational",
+            "contribution": 0.0953
+          }
+        ],
+        "nearby_projects": [
+          {
+            "name": "GIFT City (Gujarat International Finance Tec-City)",
+            "type": "smart_city",
+            "status": "operational",
+            "dist_km": 16.81,
+            "overlap_factor": 0.159,
+            "contribution": 1.5936
+          }
+        ]
+      }
+    },
+    {
+      "state": "Gujarat",
+      "name": "Surat Region",
+      "lat": 21.17,
+      "lng": 72.83,
+      "base_score": 64,
+      "infra_score": 15.17,
+      "final_score": 63,
+      "breakdown": {
+        "station_score_raw": 0.0,
+        "station_score_normalised": 0,
+        "project_score_raw": 7.0,
+        "project_score_normalised": 23.33,
+        "infra_score": 15.17,
+        "nearby_stations": [],
+        "nearby_projects": [
+          {
+            "name": "Surat Metro Rail Phase 1",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 0.0,
+            "overlap_factor": 1.0,
+            "contribution": 7.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "Gujarat",
+      "name": "Vadodara Region",
+      "lat": 22.31,
+      "lng": 73.18,
+      "base_score": 60,
+      "infra_score": 0.0,
+      "final_score": 55,
+      "breakdown": {
+        "station_score_raw": 0.0,
+        "station_score_normalised": 0,
+        "project_score_raw": 0.0,
+        "project_score_normalised": 0,
+        "infra_score": 0.0,
+        "nearby_stations": [],
+        "nearby_projects": [
+          {
+            "name": "Delhi–Mumbai Expressway (Gujarat section, NH-148N)",
+            "type": "expressway",
+            "status": "under_construction",
+            "dist_km": 44.41,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "Gujarat",
+      "name": "Dholera SIR",
+      "lat": 22.27,
+      "lng": 72.19,
+      "base_score": 59,
+      "infra_score": 15.17,
+      "final_score": 58,
+      "breakdown": {
+        "station_score_raw": 0.0,
+        "station_score_normalised": 0,
+        "project_score_raw": 7.0,
+        "project_score_normalised": 23.33,
+        "infra_score": 15.17,
+        "nearby_stations": [],
+        "nearby_projects": [
+          {
+            "name": "Dholera Special Investment Region (Dholera SIR)",
+            "type": "industrial_corridor",
+            "status": "under_construction",
+            "dist_km": 0.0,
+            "overlap_factor": 1.0,
+            "contribution": 7.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "Haryana",
+      "name": "Gurugram (Cyber City/Golf Course Rd)",
+      "lat": 28.47,
+      "lng": 77.03,
+      "base_score": 74,
+      "infra_score": 18.56,
+      "final_score": 74,
+      "breakdown": {
+        "station_score_raw": 0.3717,
+        "station_score_normalised": 9.29,
+        "project_score_raw": 7.0675,
+        "project_score_normalised": 23.56,
+        "infra_score": 18.56,
+        "nearby_stations": [
+          {
+            "name": "Sikanderpur",
+            "city": "Gurugram",
+            "dist_km": 6.01,
+            "status": "operational",
+            "contribution": 0.1426
+          },
+          {
+            "name": "Cyber City",
+            "city": "Gurugram",
+            "dist_km": 6.41,
+            "status": "operational",
+            "contribution": 0.1349
+          },
+          {
+            "name": "Dwarka Sector 21",
+            "city": "Delhi",
+            "dist_km": 9.62,
+            "status": "operational",
+            "contribution": 0.0942
+          }
+        ],
+        "nearby_projects": [
+          {
+            "name": "Delhi–Mumbai Industrial Corridor (UP + Haryana sections)",
+            "type": "industrial_corridor",
+            "status": "under_construction",
+            "dist_km": 22.78,
+            "overlap_factor": 0.544,
+            "contribution": 3.8104
+          },
+          {
+            "name": "Dwarka Expressway (NH-248BB) Gurugram Expansion",
+            "type": "expressway",
+            "status": "operational",
+            "dist_km": 6.74,
+            "overlap_factor": 0.326,
+            "contribution": 3.2571
+          },
+          {
+            "name": "Delhi Metro Phase 4 (6 corridors, 65 new stations)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 26.01,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Delhi–Meerut RRTS (Rapid Rail Transit System)",
+            "type": "rrts",
+            "status": "under_construction",
+            "dist_km": 44.26,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "Haryana",
+      "name": "Faridabad Region",
+      "lat": 28.41,
+      "lng": 77.31,
+      "base_score": 55,
+      "infra_score": 2.44,
+      "final_score": 51,
+      "breakdown": {
+        "station_score_raw": 0.0,
+        "station_score_normalised": 0,
+        "project_score_raw": 1.128,
+        "project_score_normalised": 3.76,
+        "infra_score": 2.44,
+        "nearby_stations": [],
+        "nearby_projects": [
+          {
+            "name": "Delhi–Mumbai Industrial Corridor (UP + Haryana sections)",
+            "type": "industrial_corridor",
+            "status": "under_construction",
+            "dist_km": 41.94,
+            "overlap_factor": 0.161,
+            "contribution": 1.128
+          },
+          {
+            "name": "Delhi Metro Phase 4 (6 corridors, 65 new stations)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 28.77,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Delhi–Meerut RRTS (Rapid Rail Transit System)",
+            "type": "rrts",
+            "status": "under_construction",
+            "dist_km": 33.42,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Dwarka Expressway (NH-248BB) Gurugram Expansion",
+            "type": "expressway",
+            "status": "operational",
+            "dist_km": 29.57,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "Haryana",
+      "name": "Panchkula Region",
+      "lat": 30.69,
+      "lng": 76.86,
+      "base_score": 56,
+      "infra_score": 0.0,
+      "final_score": 51,
+      "breakdown": {
+        "station_score_raw": 0.0,
+        "station_score_normalised": 0,
+        "project_score_raw": 0.0,
+        "project_score_normalised": 0,
+        "infra_score": 0.0,
+        "nearby_stations": [],
+        "nearby_projects": []
+      }
+    },
+    {
+      "state": "Uttar Pradesh",
+      "name": "Noida-Greater Noida Belt",
+      "lat": 28.57,
+      "lng": 77.32,
+      "base_score": 67,
+      "infra_score": 9.41,
+      "final_score": 64,
+      "breakdown": {
+        "station_score_raw": 1.0755,
+        "station_score_normalised": 26.89,
+        "project_score_raw": 0.0,
+        "project_score_normalised": 0,
+        "infra_score": 9.41,
+        "nearby_stations": [
+          {
+            "name": "Botanical Garden",
+            "city": "Delhi",
+            "dist_km": 1.8,
+            "status": "operational",
+            "contribution": 0.3569
+          },
+          {
+            "name": "Noida City Centre",
+            "city": "Delhi",
+            "dist_km": 3.79,
+            "status": "operational",
+            "contribution": 0.2088
+          },
+          {
+            "name": "Mayur Vihar Phase 1",
+            "city": "Delhi",
+            "dist_km": 4.81,
+            "status": "operational",
+            "contribution": 0.172
+          },
+          {
+            "name": "Noida Sector 137",
+            "city": "Noida",
+            "dist_km": 7.31,
+            "status": "operational",
+            "contribution": 0.1204
+          },
+          {
+            "name": "Lajpat Nagar",
+            "city": "Delhi",
+            "dist_km": 7.88,
+            "status": "operational",
+            "contribution": 0.1127
+          }
+        ],
+        "nearby_projects": [
+          {
+            "name": "Delhi Metro Phase 4 (6 corridors, 65 new stations)",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 14.71,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Delhi–Meerut RRTS (Rapid Rail Transit System)",
+            "type": "rrts",
+            "status": "under_construction",
+            "dist_km": 16.43,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          },
+          {
+            "name": "Dwarka Expressway (NH-248BB) Gurugram Expansion",
+            "type": "expressway",
+            "status": "operational",
+            "dist_km": 27.71,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "Uttar Pradesh",
+      "name": "Lucknow Region",
+      "lat": 26.85,
+      "lng": 80.95,
+      "base_score": 56,
+      "infra_score": 7.22,
+      "final_score": 53,
+      "breakdown": {
+        "station_score_raw": 0.8255,
+        "station_score_normalised": 20.64,
+        "project_score_raw": 0.0,
+        "project_score_normalised": 0,
+        "infra_score": 7.22,
+        "nearby_stations": [
+          {
+            "name": "Hazratganj",
+            "city": "Lucknow",
+            "dist_km": 0.49,
+            "status": "operational",
+            "contribution": 0.6716
+          },
+          {
+            "name": "Alambagh Bus Station",
+            "city": "Lucknow",
+            "dist_km": 5.5,
+            "status": "operational",
+            "contribution": 0.1538
+          }
+        ],
+        "nearby_projects": []
+      }
+    },
+    {
+      "state": "Uttar Pradesh",
+      "name": "Agra Region",
+      "lat": 27.18,
+      "lng": 78.02,
+      "base_score": 46,
+      "infra_score": 0.0,
+      "final_score": 41,
+      "breakdown": {
+        "station_score_raw": 0.0,
+        "station_score_normalised": 0,
+        "project_score_raw": 0.0,
+        "project_score_normalised": 0,
+        "infra_score": 0.0,
+        "nearby_stations": [],
+        "nearby_projects": []
+      }
+    },
+    {
+      "state": "West Bengal",
+      "name": "Kolkata New Town/Rajarhat",
+      "lat": 22.58,
+      "lng": 88.47,
+      "base_score": 64,
+      "infra_score": 37.84,
+      "final_score": 64,
+      "breakdown": {
+        "station_score_raw": 0.3023,
+        "station_score_normalised": 7.56,
+        "project_score_raw": 16.2433,
+        "project_score_normalised": 54.14,
+        "infra_score": 37.84,
+        "nearby_stations": [
+          {
+            "name": "Salt Lake Sector V",
+            "city": "Kolkata",
+            "dist_km": 4.09,
+            "status": "operational",
+            "contribution": 0.1963
+          },
+          {
+            "name": "Dum Dum",
+            "city": "Kolkata",
+            "dist_km": 8.44,
+            "status": "operational",
+            "contribution": 0.106
+          }
+        ],
+        "nearby_projects": [
+          {
+            "name": "New Town Silicon Valley (NKDA IT Hub)",
+            "type": "smart_city",
+            "status": "operational",
+            "dist_km": 1.51,
+            "overlap_factor": 0.924,
+            "contribution": 9.2433
+          },
+          {
+            "name": "Kolkata Metro New Town–Rajarhat Extension",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 0.0,
+            "overlap_factor": 1.0,
+            "contribution": 7.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "West Bengal",
+      "name": "Kolkata South",
+      "lat": 22.5,
+      "lng": 88.35,
+      "base_score": 58,
+      "infra_score": 10.85,
+      "final_score": 56,
+      "breakdown": {
+        "station_score_raw": 0.8296,
+        "station_score_normalised": 20.74,
+        "project_score_raw": 1.6575,
+        "project_score_normalised": 5.52,
+        "infra_score": 10.85,
+        "nearby_stations": [
+          {
+            "name": "Tollygunge",
+            "city": "Kolkata",
+            "dist_km": 1.1,
+            "status": "operational",
+            "contribution": 0.476
+          },
+          {
+            "name": "Park Street",
+            "city": "Kolkata",
+            "dist_km": 5.9,
+            "status": "operational",
+            "contribution": 0.145
+          },
+          {
+            "name": "Esplanade",
+            "city": "Kolkata",
+            "dist_km": 7.79,
+            "status": "operational",
+            "contribution": 0.1138
+          },
+          {
+            "name": "Howrah Maidan",
+            "city": "Kolkata",
+            "dist_km": 9.54,
+            "status": "operational",
+            "contribution": 0.0948
+          }
+        ],
+        "nearby_projects": [
+          {
+            "name": "New Town Silicon Valley (NKDA IT Hub)",
+            "type": "smart_city",
+            "status": "operational",
+            "dist_km": 16.69,
+            "overlap_factor": 0.166,
+            "contribution": 1.6575
+          },
+          {
+            "name": "Kolkata Metro New Town–Rajarhat Extension",
+            "type": "metro",
+            "status": "under_construction",
+            "dist_km": 15.2,
+            "overlap_factor": 0.0,
+            "contribution": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "state": "West Bengal",
+      "name": "Siliguri Region",
+      "lat": 26.72,
+      "lng": 88.43,
+      "base_score": 44,
+      "infra_score": 0.0,
+      "final_score": 39,
+      "breakdown": {
+        "station_score_raw": 0.0,
+        "station_score_normalised": 0,
+        "project_score_raw": 0.0,
+        "project_score_normalised": 0,
+        "infra_score": 0.0,
+        "nearby_stations": [],
+        "nearby_projects": []
+      }
+    }
+  ]
+}

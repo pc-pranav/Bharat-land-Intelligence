@@ -5,6 +5,78 @@ import GoogleMapView from "./components/GoogleMapView";
 // When deployed standalone (e.g. on Vercel), this is automatically replaced with
 // "/api/claude" so requests route through the serverless proxy — which keeps your
 // API key server-side AND adds response caching (see DEPLOY.md and lib/cache.js).
+// To deploy: change the line below to const API_ENDPOINT = "/api/claude";
+
+// ── Runtime data loader ────────────────────────────────────────────────────
+// Fetches ETL pipeline outputs from /data/ at runtime. The app boots with
+// hardcoded seed data (instant, no network dependency), then silently
+// upgrades to ETL-computed data when the JSON files are available.
+// This means:
+//   • First load is always fast — no spinner waiting for data
+//   • After ETL runs and files are deployed, scores update automatically
+//   • If fetch fails (Claude sandbox, network issue) — seed data still works
+//
+// Files served from:
+//   Vercel deployment: /public/data/*.json  (static file serving)
+//   Claude artifact:   fetch will fail gracefully, seed data used
+//
+function useAppData() {
+  const [dataReady, setDataReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadETLData() {
+      // Load REGION_CLUSTERS — ETL-computed proximity scores
+      try {
+        const rcRes = await fetch('/data/REGION_CLUSTERS.json');
+        if (rcRes.ok) {
+          const rc = await rcRes.json();
+          if (rc.clusters && !cancelled) {
+            // Merge ETL scores into the mutable REGION_CLUSTERS object
+            // Only update scores — preserve any entries in seed not in ETL
+            Object.entries(rc.clusters).forEach(([state, regions]) => {
+              REGION_CLUSTERS[state] = regions.map(r => ({
+                name:  r.name,
+                lat:   r.lat,
+                lng:   r.lng,
+                score: r.score,
+              }));
+            });
+            console.log('[ETL] Loaded REGION_CLUSTERS:', 
+              Object.values(rc.clusters).flat().length, 'regions from ETL pipeline');
+            setDataReady(true);
+          }
+        }
+      } catch (e) {
+        // Silent — seed data already loaded, ETL data is optional upgrade
+        console.log('[ETL] REGION_CLUSTERS not available, using seed data');
+      }
+
+      // Load metro stations — ETL-cleaned station list
+      try {
+        const msRes = await fetch('/data/metro_stations_flat.json');
+        if (msRes.ok) {
+          const ms = await msRes.json();
+          if (ms.stations?.length > 0 && !cancelled) {
+            // Replace the global station array in place
+            INDIA_METRO_STATIONS.length = 0;
+            ms.stations.forEach(s => INDIA_METRO_STATIONS.push(s));
+            console.log('[ETL] Loaded metro stations:', ms.stations.length, 'from ETL pipeline');
+          }
+        }
+      } catch (e) {
+        console.log('[ETL] metro_stations_flat not available, using seed data');
+      }
+    }
+
+    loadETLData();
+    return () => { cancelled = true; };
+  }, []);
+
+  return dataReady;
+}
+
 const API_ENDPOINT = "/api/claude";
 
 const C = {
@@ -34,9 +106,15 @@ function parseJSON(t){
       // Attempt repair: response was likely truncated mid-JSON.
       // Try trimming to the last complete object/array boundary.
       let repaired=sliced;
-      // Remove trailing incomplete key-value or comma
-      repaired=repaired.replace(/,\s*"[^"]*"?\s*:?\s*("[^"]*)?$/,"");
-      repaired=repaired.replace(/,\s*$/,"");
+      // Remove trailing incomplete content — handles these truncation patterns:
+      // 1. Mid-value string:  ,"key": "partial val
+      // 2. Mid-key name:      ,"partial_ke
+      // 3. Complete key+colon:,"key":
+      // 4. Trailing comma:    ,
+      repaired=repaired.replace(/,\s*"[^"]*"\s*:\s*"[^"]*$/,"");  // mid-value string
+      repaired=repaired.replace(/,\s*"[^"]*"\s*:\s*$/,"");         // key+colon only
+      repaired=repaired.replace(/,\s*"[^"]*$/,"");                    // mid-key-name (the Mysuru bug)
+      repaired=repaired.replace(/,\s*$/,"");                          // trailing comma
       // Balance braces/brackets
       const opens=(repaired.match(/[\{\[]/g)||[]).length;
       const closes=(repaired.match(/[\}\]]/g)||[]).length;
@@ -406,7 +484,12 @@ function lngLatToSVG(lng,lat){
 // Since precise district GeoJSON isn't feasible to embed, this gives a curated
 // set of named investment micro-regions per state, shown as labeled clusters
 // once you zoom in past state level (zoom >= 2.2). Clicking jumps to Analyze.
-const REGION_CLUSTERS = {
+// REGION_CLUSTERS — initially populated from the hardcoded seed below,
+// then overwritten at runtime by data fetched from /data/REGION_CLUSTERS.json
+// (the ETL pipeline output). The fetch happens in useAppData() below.
+// This means the app works immediately on first load (seed data) and then
+// silently upgrades to ETL-computed scores if the JSON file is available.
+let REGION_CLUSTERS = {
   "Karnataka": [
     {name:"Bengaluru East (Whitefield Belt)", lat:12.97, lng:77.75, score:80},
     {name:"Bengaluru North (Devanahalli/Airport)", lat:13.24, lng:77.71, score:74},
@@ -419,43 +502,43 @@ const REGION_CLUSTERS = {
     {name:"Mumbai Metropolitan Region", lat:19.08, lng:72.88, score:72},
     {name:"Pune East (Hinjewadi/Wakad)", lat:18.59, lng:73.74, score:76},
     {name:"Navi Mumbai", lat:19.03, lng:73.02, score:70},
-    {name:"Nagpur Region", lat:21.15, lng:79.09, score:55},
-    {name:"Nashik Region", lat:19.99, lng:73.79, score:56},
     {name:"Thane Belt", lat:19.22, lng:72.98, score:66},
+    {name:"Nagpur Region", lat:21.15, lng:79.09, score:55},
+    {name:"Nashik Region", lat:20.00, lng:73.79, score:56},
   ],
   "Tamil Nadu": [
-    {name:"Chennai OMR Corridor", lat:12.84, lng:80.23, score:70},
-    {name:"Chennai West (Porur/Poonamallee)", lat:13.04, lng:80.10, score:64},
-    {name:"Coimbatore Region", lat:11.02, lng:76.96, score:56},
+    {name:"Chennai OMR Corridor", lat:12.90, lng:80.23, score:70},
+    {name:"Chennai West (Porur/Poonamallee)", lat:13.04, lng:80.16, score:64},
+    {name:"Coimbatore Region", lat:11.00, lng:76.97, score:56},
     {name:"Madurai Region", lat:9.93, lng:78.12, score:50},
-    {name:"Tiruchirappalli Region", lat:10.79, lng:78.70, score:48},
+    {name:"Tiruchirappalli Region", lat:10.80, lng:78.69, score:48},
   ],
   "Telangana": [
-    {name:"Hyderabad West (Gachibowli/HITEC City)", lat:17.44, lng:78.35, score:83},
-    {name:"Hyderabad North (Kompally/Medchal)", lat:17.55, lng:78.48, score:66},
+    {name:"Hyderabad West (Gachibowli/HITEC City)", lat:17.44, lng:78.38, score:83},
+    {name:"Hyderabad North (Kompally/Medchal)", lat:17.60, lng:78.49, score:66},
     {name:"Hyderabad South (Shamshabad)", lat:17.24, lng:78.43, score:58},
-    {name:"Warangal Region", lat:17.97, lng:79.59, score:48},
+    {name:"Warangal Region", lat:18.00, lng:79.58, score:48},
   ],
   "Gujarat": [
-    {name:"Ahmedabad-Gandhinagar Belt", lat:23.07, lng:72.62, score:72},
+    {name:"Ahmedabad-Gandhinagar Belt", lat:23.03, lng:72.58, score:72},
     {name:"Surat Region", lat:21.17, lng:72.83, score:64},
     {name:"Vadodara Region", lat:22.31, lng:73.18, score:60},
-    {name:"Dholera SIR", lat:22.25, lng:72.20, score:59},
+    {name:"Dholera SIR", lat:22.27, lng:72.19, score:59},
   ],
   "Haryana": [
-    {name:"Gurugram (Cyber City/Golf Course Rd)", lat:28.46, lng:77.03, score:74},
+    {name:"Gurugram (Cyber City/Golf Course Rd)", lat:28.47, lng:77.03, score:74},
     {name:"Faridabad Region", lat:28.41, lng:77.31, score:55},
-    {name:"Panchkula Region", lat:30.69, lng:76.85, score:56},
+    {name:"Panchkula Region", lat:30.69, lng:76.86, score:56},
   ],
   "Uttar Pradesh": [
-    {name:"Noida-Greater Noida Belt", lat:28.53, lng:77.39, score:67},
+    {name:"Noida-Greater Noida Belt", lat:28.57, lng:77.32, score:67},
     {name:"Lucknow Region", lat:26.85, lng:80.95, score:56},
-    {name:"Agra Region", lat:27.18, lng:78.01, score:46},
+    {name:"Agra Region", lat:27.18, lng:78.02, score:46},
   ],
   "West Bengal": [
-    {name:"Kolkata New Town/Rajarhat", lat:22.58, lng:88.46, score:64},
-    {name:"Kolkata South", lat:22.50, lng:88.34, score:58},
-    {name:"Siliguri Region", lat:26.73, lng:88.43, score:44},
+    {name:"Kolkata New Town/Rajarhat", lat:22.58, lng:88.47, score:64},
+    {name:"Kolkata South", lat:22.50, lng:88.35, score:58},
+    {name:"Siliguri Region", lat:26.72, lng:88.43, score:44},
   ],
 };
 
@@ -867,9 +950,7 @@ function MapView(props) {
   const apiKey = typeof import.meta !== "undefined" ? import.meta.env?.VITE_GOOGLE_MAPS_API_KEY : null;
   const [useGoogle, setUseGoogle] = useState(!!apiKey);
   const mapProps = { stateGrowth: STATE_GROWTH, regionClusters: REGION_CLUSTERS, ...props };
-
   if (!apiKey) return <IndiaMap {...props} />;
-
   return (
     <div style={{ position: "relative" }}>
       <div style={{ position: "absolute", top: 10, left: 10, zIndex: 30, display: "flex", gap: 4 }}>
@@ -879,7 +960,7 @@ function MapView(props) {
               color: useGoogle === val ? "#fff" : C.muted,
               border: "1px solid " + (useGoogle === val ? C.navy : C.border),
               borderRadius: 16, padding: "5px 11px", fontFamily: "Inter,sans-serif",
-              fontSize: 11, fontWeight: 600, cursor: "pointer", boxShadow: "0 1px 4px rgba(0,0,0,0.1)" }}>
+              fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
             {label}
           </button>
         ))}
@@ -1038,7 +1119,9 @@ function ProvenanceBadge({type}){
 // Each station: {n: name, la: lat, lo: lng, ln: line, st: status, c: city}
 // status: "op" = operational | "uc" = under construction | "pr" = proposed
 // Compact keys to keep bundle size manageable (this is ~600 stations).
-const INDIA_METRO_STATIONS = [
+// INDIA_METRO_STATIONS — seed data embedded here, upgraded at runtime
+// from /data/metro_stations_flat.json (ETL output) via useAppData() below.
+let INDIA_METRO_STATIONS = [
 
 // ── BENGALURU — Namma Metro (86 operational as of Aug 2025) ─────────────────
 // Purple Line (Whitefield–Challaghatta, 38 stations)
@@ -2164,6 +2247,183 @@ function ReportCard({data,pins}){
 const LS={fontFamily:"Inter,sans-serif",fontSize:12,color:C.muted,display:"block",marginBottom:3,fontWeight:500};
 const IS={width:"100%",border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 11px",fontFamily:"Inter,sans-serif",fontSize:13,color:C.dark,outline:"none",boxSizing:"border-box",background:C.bg};
 
+// ── RERA Search Component ──────────────────────────────────────────────────
+// Searches the ETL-built rera_index.json by project name OR company name.
+// No registration number needed. Links directly to official state portal.
+function RERASearchTab() {
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState([]);
+  const [allProjects, setAllProjects] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [dataSource, setDataSource] = useState("loading");
+
+  useEffect(() => {
+    // Load RERA index from ETL output
+    fetch('/data/rera_index.json')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.projects?.length > 0) {
+          setAllProjects(data.projects);
+          setDataSource(`${data.projects.length} projects · ${data.states_covered?.length || 0} states`);
+        } else {
+          setDataSource("unavailable");
+        }
+        setLoading(false);
+      })
+      .catch(() => {
+        setDataSource("unavailable");
+        setLoading(false);
+      });
+  }, []);
+
+  // Fuzzy search — matches on project name, company name, or city
+  // Uses pre-tokenised search_tokens from ETL for fast client-side matching
+  const search = (query) => {
+    setQ(query);
+    if (!query.trim() || query.length < 2) { setResults([]); return; }
+    const tokens = query.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(' ').filter(t => t.length >= 2);
+    const scored = allProjects.map(p => {
+      const projectTokens = p.search_tokens || [];
+      const displayText = (p.search_display || '').toLowerCase();
+      // Score: how many query tokens match?
+      const matchCount = tokens.filter(t =>
+        projectTokens.some(pt => pt.includes(t)) || displayText.includes(t)
+      ).length;
+      return { ...p, _score: matchCount };
+    }).filter(p => p._score > 0)
+      .sort((a, b) => b._score - a._score)
+      .slice(0, 12);
+    setResults(scored);
+  };
+
+  const statusColor = (s) => ({
+    "Completed": "#15803D", "Ongoing": "#1D4ED8",
+    "Lapsed": "#C84B31", "Revoked": "#C84B31",
+  })[s] || C.muted;
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      {/* Header */}
+      <div style={{background:C.navy,borderRadius:12,padding:"14px 16px"}}>
+        <div style={{color:"#F8FAFB",fontFamily:"serif",fontSize:16,marginBottom:4}}>
+          🔍 RERA Project Search
+        </div>
+        <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:11,lineHeight:1.5}}>
+          Search by project name or builder — no registration number needed.
+          Links directly to official state RERA portals.
+        </div>
+      </div>
+
+      {/* Search input */}
+      <div style={{display:"flex",gap:8}}>
+        <input
+          value={q}
+          onChange={e => search(e.target.value)}
+          placeholder="e.g. Prestige, Godrej, Lodha Palava, Brigade..."
+          style={{flex:1,border:"1.5px solid "+C.border,borderRadius:9,padding:"10px 13px",
+            fontFamily:"Inter,sans-serif",fontSize:13,color:C.dark,outline:"none"}}
+        />
+        {q && <button onClick={()=>{setQ("");setResults([]);}}
+          style={{background:"none",border:"1px solid "+C.border,borderRadius:9,
+            padding:"0 12px",color:C.muted,cursor:"pointer",fontFamily:"Inter,sans-serif",fontSize:12}}>
+          Clear
+        </button>}
+      </div>
+
+      {/* Data source badge */}
+      <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,
+        display:"flex",alignItems:"center",gap:6}}>
+        {loading ? "Loading RERA database..." :
+         dataSource === "unavailable"
+           ? "⚠️ RERA index not loaded — run etl/02_ingest_infrastructure.py and deploy /data/rera_index.json"
+           : `📋 ${dataSource} · Powered by ETL pipeline`}
+      </div>
+
+      {/* Results */}
+      {q.length >= 2 && !loading && results.length === 0 && (
+        <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.muted,
+          padding:"14px",background:C.bg,borderRadius:9,textAlign:"center"}}>
+          No RERA projects found matching "{q}".
+          <br/>
+          <span style={{fontSize:11}}>
+            Try the builder name (e.g. "Prestige", "Sobha") or part of the project name.
+            <br/>
+            Or{" "}
+            <a href={`https://www.google.com/search?q=RERA+${encodeURIComponent(q)}+site:rera.karnataka.gov.in+OR+site:maharera.mahaonline.gov.in+OR+site:rera.telangana.gov.in`}
+              target="_blank" rel="noopener noreferrer"
+              style={{color:C.blue}}>search across all state portals →</a>
+          </span>
+        </div>
+      )}
+
+      {results.map((p, i) => (
+        <div key={i} style={{background:"#fff",border:"1px solid "+C.border,
+          borderRadius:10,padding:"12px 14px",display:"flex",flexDirection:"column",gap:6}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+            <div style={{flex:1}}>
+              <div style={{fontFamily:"serif",fontSize:14,color:C.dark,lineHeight:1.3}}>
+                {p.project_name}
+              </div>
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,marginTop:2}}>
+                {p.company_name}
+              </div>
+            </div>
+            <span style={{flexShrink:0,fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:600,
+              padding:"2px 8px",borderRadius:10,
+              background: p.status==="Completed"?"#F0FDF4":p.status==="Ongoing"?"#EFF6FF":"#FFF7F5",
+              color:statusColor(p.status)}}>
+              {p.status}
+            </span>
+          </div>
+
+          <div style={{display:"flex",gap:12,fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted}}>
+            <span>📍 {p.city}{p.district && p.district !== p.city ? `, ${p.district}` : ""}, {p.state}</span>
+            <span>🏗️ {p.type}</span>
+          </div>
+
+          {p.rera_id && p.rera_id !== "—" && (
+            <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,
+              background:C.bg,borderRadius:6,padding:"4px 8px"}}>
+              RERA ID: <span style={{fontFamily:"monospace",color:C.dark}}>{p.rera_id}</span>
+            </div>
+          )}
+
+          <div style={{display:"flex",gap:8,marginTop:2}}>
+            <a href={p.direct_url} target="_blank" rel="noopener noreferrer"
+              style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,
+                color:"#fff",background:C.blue,borderRadius:7,padding:"5px 12px",
+                textDecoration:"none"}}>
+              View on {p.state} RERA →
+            </a>
+            {p.portal_url && (
+              <a href={p.portal_url} target="_blank" rel="noopener noreferrer"
+                style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.blue,
+                  borderRadius:7,padding:"5px 12px",border:"1px solid "+C.blue,
+                  textDecoration:"none"}}>
+                State portal
+              </a>
+            )}
+          </div>
+        </div>
+      ))}
+
+      {/* Help text when idle */}
+      {!q && !loading && dataSource !== "unavailable" && (
+        <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,
+          background:C.bg,borderRadius:9,padding:"12px 14px",lineHeight:1.7}}>
+          <strong style={{color:C.dark}}>How to search:</strong><br/>
+          • Builder name — "Prestige", "Godrej Properties", "Sobha"<br/>
+          • Project name — "Palava", "Utopia", "Woodland"<br/>
+          • Partial match — "brigade" finds all Brigade projects<br/>
+          • City — combined with builder: "Pune Godrej"<br/><br/>
+          <strong style={{color:C.dark}}>State portals covered:</strong>{" "}
+          Karnataka · Maharashtra · Telangana · Tamil Nadu · Gujarat
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ScreenerTab(){
   const [f,setF]=useState({city:"Bengaluru",radius:100,minCagr:12,maxPrice:5000,minInfra:70,maxRisk:45});
   const [results,setResults]=useState(null);
@@ -2185,7 +2445,7 @@ Each object must have: location, district, state, current_price_sqft, expected_c
       const cacheKey="screener_"+[f.city,f.radius,f.minCagr,f.maxPrice,f.minInfra,f.maxRisk].join("_").toLowerCase().replace(/[^a-z0-9_]/g,"");
       const res=await fetch(API_ENDPOINT,{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:10000,temperature:0,messages:[{role:"user",content:prompt}],cacheKey,cacheType:"screener"}),
+        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:5500,temperature:0,messages:[{role:"user",content:prompt}],cacheKey,cacheType:"screener"}),
       });
       const d=await res.json();
       if(d.error){setError("API: "+d.error.message);setLoading(false);return;}
@@ -2362,6 +2622,7 @@ Zones: 90-100 Mega Growth, 80-89 Emerging Hot, 65-79 Growth, 50-64 Stable, <50 H
 // Extend this list as more duplicates are discovered. Format: name → array of contexts.
 const AMBIGUOUS_LOCALITIES = {
   // Bengaluru
+  "alnahalli":     ["Alnahalli, Mysuru (residential area off Outer Ring Road, Mysuru)", "Alnahalli, Bengaluru (near Tumkur Road, North-West Bengaluru)"],
   "kalkere":       ["Kalkere, Ramamurthy Nagar area (East Bengaluru, near ITPL)", "Kalkere, Bannerghatta Road (South Bengaluru, near JP Nagar)"],
   "hennur":        ["Hennur, off Hennur Road (North Bengaluru, near Kalyan Nagar)", "Hennur Village, near Devanahalli Road (Far North Bengaluru)"],
   "kothanur":      ["Kothanur, Bannerghatta Road (South Bengaluru)", "Kothanur, Hennur (North Bengaluru)"],
@@ -2441,7 +2702,7 @@ function AnalyzeTab({initialQuery="",onClear}){
       const cacheKey="analyze_"+loc.toLowerCase().trim().replace(/[^a-z0-9]+/g,"_");
       const res=await fetch(API_ENDPOINT,{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:10000,temperature:0,system:SYS,
+        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:5500,temperature:0,system:SYS,
           messages:[{role:"user",content:`Analyze for land investment: ${loc}, India`}],
           cacheKey,cacheType:"analyze"}),
       });
@@ -2671,6 +2932,20 @@ function HomeTab({onStateSelect,onNavigate}){
         ))}
       </div>
 
+      <button onClick={()=>onNavigate("pricer")}
+        style={{display:"flex",alignItems:"center",gap:10,background:"#fff",
+          border:"1px solid #E2E8F0",borderRadius:10,padding:"11px 13px",
+          cursor:"pointer",textAlign:"left",width:"100%"}}>
+        <span style={{fontSize:18,flexShrink:0}}>📋</span>
+        <div style={{flex:1}}>
+          <div style={{fontFamily:"serif",fontSize:13,color:"#1E293B"}}>Check RERA registration</div>
+          <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#64748B",marginTop:1}}>
+            Search by project name or builder — no reg number needed
+          </div>
+        </div>
+        <span style={{color:"#94A3B8",fontSize:14,flexShrink:0}}>→</span>
+      </button>
+
       {topCities[0]&&(
         <div style={{background:"#FFFBEB",borderRadius:9,border:`1px solid #FDE68A`,padding:"11px 13px",
           fontFamily:"Inter,sans-serif",fontSize:12,color:"#92400E"}}>
@@ -2851,18 +3126,18 @@ const COMPLETION_APPRECIATION = {
 
 // ── Civic Score Factors ───────────────────────────────────────────────────────
 const CIVIC_FACTORS = [
-  {id:"road_quality", label:"Road Quality & Maintenance", positive:true},
-  {id:"garbage_mgmt", label:"Garbage Collection & SWM", positive:true},
-  {id:"streetlight", label:"Street Lighting", positive:true},
-  {id:"sewage_good", label:"No Sewage / Flooding Issues", positive:true},
-  {id:"park_public", label:"Public Parks Nearby", positive:true},
-  {id:"police_presence", label:"Police Station / Patrolling", positive:true},
-  {id:"noise_pollution", label:"Noise Pollution Issues", positive:false},
-  {id:"air_quality", label:"Air Quality (AQI issues)", positive:false},
-  {id:"stray_animals", label:"Stray Animal Problem", positive:false},
-  {id:"illegal_constructions", label:"Illegal Constructions Nearby", positive:false},
-  {id:"flooding", label:"Flooding / Waterlogging in Rains", positive:false},
-  {id:"power_cuts", label:"Frequent Power Cuts", positive:false},
+  {id:"road_quality",          label:"Road Quality & Maintenance",      positive:true,  score:8},
+  {id:"garbage_mgmt",          label:"Garbage Collection & SWM",        positive:true,  score:5},
+  {id:"streetlight",           label:"Street Lighting",                 positive:true,  score:4},
+  {id:"sewage_good",           label:"No Sewage / Flooding Issues",     positive:true,  score:6},
+  {id:"park_public",           label:"Public Parks Nearby",             positive:true,  score:5},
+  {id:"police_presence",       label:"Police Station / Patrolling",     positive:true,  score:4},
+  {id:"noise_pollution",       label:"Noise Pollution Issues",          positive:false, score:-5},
+  {id:"air_quality",           label:"Air Quality (AQI issues)",        positive:false, score:-6},
+  {id:"stray_animals",         label:"Stray Animal Problem",            positive:false, score:-3},
+  {id:"illegal_constructions", label:"Illegal Constructions Nearby",    positive:false, score:-8},
+  {id:"flooding",              label:"Flooding / Waterlogging in Rains",positive:false, score:-7},
+  {id:"power_cuts",            label:"Frequent Power Cuts",             positive:false, score:-4},
 ];
 
 // ── Infra Proximity ───────────────────────────────────────────────────────────
@@ -3044,1016 +3319,1343 @@ const VENTILATION_OPTIONS = ["Excellent (Cross Ventilation)","Good","Average","P
 const CITY_GROUPS = Object.keys(APPROVAL_TYPES);
 
 
+// ─────────────────────────────────────────────────────────────────────────────
+// NEW PRICER TAB — Combined design
+// Structure:
+//   Internal tab A — Quick Check: RERA search → 4 inputs → instant estimate
+//   Internal tab B — Full Valuation: 5-step wizard with live amenity pricing
+// ─────────────────────────────────────────────────────────────────────────────
+
 function PricerTab(){
-  // Property type
-  const [propType, setPropType] = useState("Apartment / Flat");
-  const [city, setCity] = useState("Bengaluru");
+  const [mode, setMode] = useState("quick"); // "quick" | "full"
+
+  // ── Shared state (used by both modes) ─────────────────────────────────────
+  const [city, setCity]         = useState("Bengaluru");
   const [locality, setLocality] = useState("");
-  const [bhk, setBhk] = useState("2 BHK");
-  const [areaType, setAreaType] = useState("Super Built-up Area");
-  const [area, setArea] = useState(1200);
-  const [plotArea, setPlotArea] = useState(1200); // in sqyd for plots
+  const [propType, setPropType] = useState("Apartment / Flat");
+  const [bhk, setBhk]           = useState("2 BHK");
+  const [areaType, setAreaType] = useState("Carpet Area");
+  const [area, setArea]         = useState(1200);
+  const [plotArea, setPlotArea] = useState(1200);
   const [plotAreaUnit, setPlotAreaUnit] = useState("sqft");
-  const [buildingType, setBuildingType] = useState("High Rise (20+ floors)");
-  const [totalFloors, setTotalFloors] = useState(20);
+  const [buildingType, setBuildingType] = useState("High Rise (>10 floors)");
+  const [totalFloors, setTotalFloors]   = useState(20);
   const [selectedFloor, setSelectedFloor] = useState(7);
-  const [totalBlocks, setTotalBlocks] = useState(1);
-  const [commonWalls, setCommonWalls] = useState("1 Common Wall");
+  const [totalBlocks, setTotalBlocks]   = useState(3);
+  const [commonWalls, setCommonWalls]   = useState("1 Common Wall");
   const [constructionStatus, setConstructionStatus] = useState("Ready to Move / Possession");
-  const [completionYear, setCompletionYear] = useState(new Date().getFullYear() + 2);
-  const [developer, setDeveloper] = useState("Standard Builder (Local reputed)");
+  const [completionYear, setCompletionYear] = useState(2026);
+  const [developer, setDeveloper]       = useState("Standard Builder (Local reputed)");
   const [customDevPremium, setCustomDevPremium] = useState("");
   const [waterQuality, setWaterQuality] = useState("Corporation Supply");
-  const [carParking, setCarParking] = useState(1);
-  const [age, setAge] = useState("New (0-2 yrs)");
+  const [carParking, setCarParking]     = useState(1);
+  const [age, setAge]                   = useState("New (0-2 yrs)");
+  const [askingPrice, setAskingPrice]   = useState("");
 
-  // Amenities
-  const [selAmenities, setSelAmenities] = useState(["security_24x7","cctv","power_backup_full","lift","covered_parking","water_24x7","intercom","fire_safety","gym","swimming_pool","clubhouse","kids_play","landscape_garden"]);
-  const [amenityMode, setAmenityMode] = useState("select"); // "select" or "count"
-  const [amenityCount, setAmenityCount] = useState(30);
-  const [expandedCat, setExpandedCat] = useState(null);
+  // ── Amenity state ──────────────────────────────────────────────────────────
+  const [selAmenities, setSelAmenities] = useState([
+    "security_24x7","cctv","power_backup_full","lift","covered_parking",
+    "water_24x7","intercom","fire_safety","gym","swimming_pool","clubhouse","kids_play","landscape_garden"
+  ]);
+  const [amenityMode, setAmenityMode]   = useState("select");
+  const [amenityCount, setAmenityCount] = useState(20);
+  const [expandedCat, setExpandedCat]   = useState("Essential (High Impact)");
 
-  // Civic scores
+  // ── Civic & infra state ────────────────────────────────────────────────────
   const [civicGood, setCivicGood] = useState(["road_quality","streetlight","garbage_mgmt"]);
-  const [civicBad, setCivicBad] = useState([]);
+  const [civicBad,  setCivicBad]  = useState([]);
+  const [selInfra, setSelInfra]   = useState(["hospital_2km","school_1km","supermarket_500m","bus_500m","metro_1km"]);
 
-  // Infra
-  const [selInfra, setSelInfra] = useState(["hospital_2km","school_1km","supermarket_500m","bus_stop_300m","pharmacy_nearby","clinic_nearby"]);
-
-  // User price corrections
+  // ── Pricing / corrections ──────────────────────────────────────────────────
   const [userMinPrice, setUserMinPrice] = useState("");
   const [userMaxPrice, setUserMaxPrice] = useState("");
   const [priceCorrections, setPriceCorrections] = useState([]);
 
-  // Results
-  const [result, setResult] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [feedback, setFeedback] = useState(null);
-  const [showFeedback, setShowFeedback] = useState(false);
-  const [activeSection, setActiveSection] = useState("property");
-  // UDS & Loan calculator states
-  const [udsPercent,setUdsPercent]=useState("");
-  const [totalLandArea,setTotalLandArea]=useState("");
-  const [loanAmount,setLoanAmount]=useState("");
-  const [loanInterestRate,setLoanInterestRate]=useState(8.5);
-  const [loanTenureYears,setLoanTenureYears]=useState(20);
-  const [downPayment,setDownPayment]=useState("");
-  const [annualMaintenance,setAnnualMaintenance]=useState("");
-  const [annualRepairs,setAnnualRepairs]=useState("");
-  const [propertyTaxAnnual,setPropertyTaxAnnual]=useState("");
-  const [landAppreciationRate,setLandAppreciationRate]=useState(10);
-  // Legal, approval, views, maintenance states
-  const [maintenanceCharge, setMaintenanceCharge] = useState("");
-  const [autoCalc, setAutoCalc] = useState(true);
-  const [maintenanceType, setMaintenanceType] = useState("per sqft/month");
-  const [totalFlatsInBuilding, setTotalFlatsInBuilding] = useState(50);
-  const [approvalType, setApprovalType] = useState("BBMP A Khata");
-  const [approvalState, setApprovalState] = useState("");
-  const [hasLakeView, setHasLakeView] = useState(false);
-  const [hasGardenView, setHasGardenView] = useState(false);
-  const [hasParkView, setHasParkView] = useState(false);
-  const [hasCityView, setHasCityView] = useState(false);
-  const [legalStatus, setLegalStatus] = useState("Clear Title");
-  const [constructionQuality, setConstructionQuality] = useState("Grade A (Premium)");
-  const [ventilation, setVentilation] = useState("Good");
-  const [noBalconies, setNoBalconies] = useState(1);
-  const [hasDuplex, setHasDuplex] = useState(false);
+  // ── Legal, quality, views ──────────────────────────────────────────────────
+  const [approvalState, setApprovalState]   = useState("");
+  const [approvalType, setApprovalType]     = useState("BBMP A Khata");
+  const [legalStatus, setLegalStatus]       = useState("Clear Title");
+  const [constructionQuality, setConstructionQuality] = useState("Standard (RCC, ISI materials)");
+  const [communityType, setCommunityType]   = useState("Gated Community");
+  const [ventilation, setVentilation]       = useState("Good (Cross ventilation)");
+  const [noBalconies, setNoBalconies]       = useState(1);
+  const [totalFlatsInBuilding, setTotalFlatsInBuilding] = useState(120);
+  const [hasLakeView, setHasLakeView]       = useState(false);
+  const [hasGardenView, setHasGardenView]   = useState(false);
+  const [hasParkView, setHasParkView]       = useState(false);
+  const [hasCityView, setHasCityView]       = useState(false);
+  const [hasDuplex, setHasDuplex]           = useState(false);
   const [hasServantRoom, setHasServantRoom] = useState(false);
-  const [communityType, setCommunityType] = useState("Gated Community");
 
-  const isPlot = propType === "Plot / Land";
-  const isVilla = propType.includes("Villa") || propType === "Row House / Townhouse";
-  const isPenthouse = propType === "Penthouse";
+  // ── Maintenance & auto-calc ────────────────────────────────────────────────
+  const [maintenanceCharge, setMaintenanceCharge]   = useState("");
+  const [maintenanceType, setMaintenanceType]       = useState("flat monthly charge");
+  const [autoCalc, setAutoCalc]                     = useState(true);
+  const [annualMaintenance, setAnnualMaintenance]   = useState("");
+  const [annualRepairs, setAnnualRepairs]           = useState("");
+  const [propertyTaxAnnual, setPropertyTaxAnnual]   = useState("");
+  const [landAppreciationRate, setLandAppreciationRate] = useState(10);
 
-  const toggleAmenity = (id) => setSelAmenities(p => p.includes(id) ? p.filter(x=>x!==id) : [...p, id]);
-  const toggleCivicGood = (id) => setCivicGood(p => p.includes(id) ? p.filter(x=>x!==id) : [...p, id]);
-  const toggleCivicBad = (id) => setCivicBad(p => p.includes(id) ? p.filter(x=>x!==id) : [...p, id]);
-  const toggleInfra = (id) => setSelInfra(p => p.includes(id) ? p.filter(x=>x!==id) : [...p, id]);
+  // ── UDS & Loan ─────────────────────────────────────────────────────────────
+  const [udsPercent, setUdsPercent]         = useState("");
+  const [totalLandArea, setTotalLandArea]   = useState("");
+  const [loanAmount, setLoanAmount]         = useState("");
+  const [downPayment, setDownPayment]       = useState("");
+  const [loanInterestRate, setLoanInterestRate] = useState(8.5);
+  const [loanTenureYears, setLoanTenureYears]   = useState(20);
 
-  const fmtL = (n) => n >= 10000000 ? (n/10000000).toFixed(2)+"Cr" : n >= 100000 ? (n/100000).toFixed(2)+"L" : n?.toLocaleString?.() || n;
+  // ── RERA search ────────────────────────────────────────────────────────────
+  const [reraQuery, setReraQuery]     = useState("");
+  const [reraResults, setReraResults] = useState([]);
+  const [reraProject, setReraProject] = useState(null);
+  const [reraProjects, setReraProjects] = useState([]);
+  const [reraLoaded, setReraLoaded]   = useState(false);
 
-  // Civic score calculation
-  const civicScore = Math.round(
-    50 +
-    civicGood.length * (50 / CIVIC_FACTORS.filter(f=>f.positive).length) -
-    civicBad.length * (50 / CIVIC_FACTORS.filter(f=>!f.positive).length)
-  );
+  // ── UI state ───────────────────────────────────────────────────────────────
+  const [activeSection, setActiveSection] = useState("property");
+  const [result, setResult]       = useState(null);
+  const [loading, setLoading]     = useState(false);
+  const [error, setError]         = useState("");
+  const [feedback, setFeedback]   = useState(null);
+  const [showFeedback, setShowFeedback] = useState(false);
 
-  // Infra premium
-  const infraPremium = selInfra.reduce((s,id) => {
-    const item = INFRA_ITEMS.find(x=>x.id===id);
-    return s + (item?.premium || 0);
-  }, 0);
+  const isPlot      = propType.toLowerCase().includes("plot") || propType.toLowerCase().includes("land");
+  const isVilla     = propType.toLowerCase().includes("villa") || propType.toLowerCase().includes("row");
+  const isPenthouse = propType.toLowerCase().includes("penthouse");
 
-  // Amenity premium calculation
-  const getAmenityPremium = () => {
-    if (amenityMode === "count") {
-      // Estimate based on count: assume mix of essential/standard/premium
-      const avgPremium = amenityCount <= 10 ? 70 : amenityCount <= 20 ? 90 : amenityCount <= 40 ? 110 : amenityCount <= 60 ? 130 : 150;
-      return amenityCount * avgPremium * 0.6;
-    }
-    return selAmenities.reduce((sum, id) => {
-      const a = ALL_AMENITIES.find(x=>x.id===id);
-      return sum + (a ? a.premium * a.weight : 0);
-    }, 0);
+  // ── Load RERA index ────────────────────────────────────────────────────────
+  useEffect(() => {
+    fetch('/data/rera_index.json')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if(d?.projects) { setReraProjects(d.projects); setReraLoaded(true); }})
+      .catch(() => {});
+  }, []);
+
+  // ── RERA search ────────────────────────────────────────────────────────────
+  const searchRERA = (q) => {
+    setReraQuery(q); setReraProject(null);
+    if(!q.trim() || q.length < 2) { setReraResults([]); return; }
+    const tokens = q.toLowerCase().replace(/[^a-z0-9 ]/g,' ').split(' ').filter(t=>t.length>=2);
+    const scored = reraProjects.map(p => {
+      const toks = p.search_tokens || [];
+      const disp = (p.search_display||'').toLowerCase();
+      const hits = tokens.filter(t => toks.some(pt=>pt.includes(t)) || disp.includes(t)).length;
+      return {...p, _score: hits};
+    }).filter(p=>p._score>0).sort((a,b)=>b._score-a._score).slice(0,5);
+    setReraResults(scored);
   };
+  const selectRERA = (p) => {
+    setReraProject(p); setReraResults([]); setReraQuery(p.project_name);
+    if(p.city) setCity(p.city);
+    if(p.city) setLocality(p.city + (p.district && p.district!==p.city ? ', '+p.district : ''));
+  };
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  const fmtL = (n) => n >= 10000000 ? (n/10000000).toFixed(2)+"Cr" : n >= 100000 ? (n/100000).toFixed(2)+"L" : n >= 1000 ? (n/1000).toFixed(0)+"k" : String(Math.round(n||0));
+  const fmt  = (n) => "₹" + fmtL(n);
+  const fmtCr= (n) => `₹${(n/1e7).toFixed(2)} Cr`;
+
+  const toggleAmenity = (id) => setSelAmenities(p => p.includes(id) ? p.filter(x=>x!==id) : [...p,id]);
+  const toggleCivicGood = (id) => setCivicGood(p => p.includes(id) ? p.filter(x=>x!==id) : [...p,id]);
+  const toggleCivicBad  = (id) => setCivicBad(p  => p.includes(id) ? p.filter(x=>x!==id) : [...p,id]);
+  const toggleInfra = (id) => setSelInfra(p => p.includes(id) ? p.filter(x=>x!==id) : [...p,id]);
+
+  const resetForm = () => {
+    setLocality(""); setUserMinPrice(""); setUserMaxPrice(""); setResult(null);
+    setError(""); setFeedback(null);
+    setSelAmenities(["security_24x7","cctv","power_backup_full","lift","covered_parking","water_24x7"]);
+    setApprovalType("BBMP A Khata"); setLegalStatus("Clear Title");
+    setHasLakeView(false); setHasGardenView(false); setHasParkView(false);
+    setHasCityView(false); setHasDuplex(false); setHasServantRoom(false); setMaintenanceCharge("");
+  };
+
+  // ── Civic score ────────────────────────────────────────────────────────────
+  const civicScore = (() => {
+    const base = 50;
+    const good = (CIVIC_FACTORS||[]).filter(f=>f.positive&&civicGood.includes(f.id)).reduce((s,f)=>s+(f.score||0),0);
+    const bad  = (CIVIC_FACTORS||[]).filter(f=>!f.positive&&civicBad.includes(f.id)).reduce((s,f)=>s+(f.score||0),0);
+    return Math.min(100, Math.max(0, base + good + bad));
+  })();
 
   const amenityScore = amenityMode === "count"
     ? Math.min(100, Math.round(amenityCount * 1.2))
     : Math.min(100, Math.round(selAmenities.length * 2.5));
 
-  // Water quality factor
-  const waterFactor = {"Borewell (Hard Water)":0.96,"Corporation Supply":1.0,"Treated / RO Water":1.04,"Mixed (Borewell + Corp)":0.98,"24×7 Treated Water":1.06}[waterQuality] || 1.0;
-
-  // Floor premium
-  const floorFactor = () => {
-    if (isVilla || isPlot) return 1.0;
-    const pct = selectedFloor / totalFloors;
-    if (selectedFloor === 0) return 0.90; // ground
-    if (pct <= 0.15) return 0.93;
-    if (pct <= 0.35) return 0.97;
-    if (pct <= 0.60) return 1.0;
-    if (pct <= 0.80) return 1.04;
-    if (isPenthouse || pct > 0.90) return 1.12;
-    return 1.07;
+  const getAmenityPremium = () => {
+    if(amenityMode === "count") {
+      const avg = amenityCount<=10?70:amenityCount<=25?120:amenityCount<=45?180:230;
+      return amenityCount * avg * 0.4;
+    }
+    return Object.entries(AMENITY_CATEGORIES||{}).reduce((total,[cat,data]) =>
+      total + data.items.filter(a=>selAmenities.includes(a.id)).reduce((s,a)=>s+a.premium*data.weight,0), 0);
   };
 
-  // Common walls discount
-  const wallFactor = {"No Common Walls (Corner/End Unit)":1.07,"1 Common Wall":1.0,"2 Common Walls (Middle Unit)":0.95,"3 Common Walls":0.90}[commonWalls] || 1.0;
+  const infraPremium = (INFRA_ITEMS||[]).filter(x=>selInfra.includes(x.id)).reduce((s,x)=>s+(x.premium||0),0);
 
-  // Parking premium
-  const parkingPremium = carParking * 150;
-
-  // Construction factor
-  const constFactor = CONSTRUCTION_FACTOR[constructionStatus] || 1.0;
-  const appreciationOnCompletion = COMPLETION_APPRECIATION[constructionStatus] || 0;
-
-  // Dev premium
-  const devFactor = customDevPremium ? (1 + parseFloat(customDevPremium)/100) : (DEVELOPER_TIERS[developer] || 1.0);
-
-  // Age factor
-  const ageFactor = {"New (0-2 yrs)":1.0,"Recent (3-5 yrs)":0.93,"Mid (6-10 yrs)":0.85,"Old (11-20 yrs)":0.75,"Very Old (20+ yrs)":0.62}[age] || 1.0;
-
-  // Civic premium
-  const civicPremium = (civicScore - 50) * 8;
-
-  // Base rates — now city-tier aware instead of one flat number nationwide
-  const propKind = isPlot ? "plot" : isVilla ? "villa" : isPenthouse ? "penthouse" : "apartment";
-  const BASE_RATE = getCityTierRate(city, propKind);
-
-  // User correction factor
-  const corrFactor = priceCorrections.length > 0
-    ? priceCorrections.slice(-3).reduce((p,c) => p * c.factor, 1) / Math.min(3, priceCorrections.length)
-    : 1.0;
-  // Normalize: don't let corrections cascade exponentially
-  const normCorrFactor = priceCorrections.length > 0
-    ? priceCorrections.slice(-3).reduce((s,c) => s + c.factor, 0) / Math.min(3, priceCorrections.length)
+  // ── Pricing formula (exact original) ──────────────────────────────────────
+  const waterFactor = {"Borewell (Hard Water)":0.96,"Corporation Supply":1.0,"Treated / RO Water":1.04,"Mixed (Borewell + Corp)":0.98,"24×7 Treated Water":1.06}[waterQuality]||1.0;
+  const floorFactor = () => {
+    if(isVilla||isPlot) return 1.0;
+    const pct = selectedFloor/totalFloors;
+    if(selectedFloor===0) return 0.90;
+    if(pct<=0.15) return 0.93;
+    if(pct<=0.35) return 0.97;
+    if(pct<=0.60) return 1.0;
+    if(pct<=0.80) return 1.04;
+    if(isPenthouse||pct>0.90) return 1.12;
+    return 1.07;
+  };
+  const wallFactor   = {"No Common Walls (Corner/End Unit)":1.07,"1 Common Wall":1.0,"2 Common Walls (Middle Unit)":0.95,"3 Common Walls":0.90}[commonWalls]||1.0;
+  const parkingPremium = carParking*150;
+  const constFactor    = (CONSTRUCTION_FACTOR||{})[constructionStatus]||1.0;
+  const appreciationOnCompletion = (COMPLETION_APPRECIATION||{})[constructionStatus]||0;
+  const devFactor      = customDevPremium ? (1+parseFloat(customDevPremium)/100) : ((DEVELOPER_TIERS||{})[developer]||1.0);
+  const ageFactor      = {"New (0-2 yrs)":1.0,"Recent (3-5 yrs)":0.93,"Mid (6-10 yrs)":0.85,"Old (11-20 yrs)":0.75,"Very Old (20+ yrs)":0.62}[age]||1.0;
+  const civicPremium   = (civicScore-50)*8;
+  const viewPremium    = (hasLakeView?350:0)+(hasGardenView?200:0)+(hasParkView?150:0)+(hasCityView?220:0)+(hasDuplex?600:0)+(hasServantRoom?120:0);
+  const propKind       = isPlot?"plot":isVilla?"villa":isPenthouse?"penthouse":"apartment";
+  const BASE_RATE      = getCityTierRate(city,propKind);
+  const normCorrFactor = priceCorrections.length>0
+    ? priceCorrections.slice(-3).reduce((s,c)=>s+c.factor,0)/Math.min(3,priceCorrections.length)
     : 1.0;
 
   const calcEstimate = () => {
     const amenPrem = getAmenityPremium();
     const rate = Math.round(
-      (BASE_RATE + amenPrem + infraPremium + parkingPremium + civicPremium)
-      * ageFactor * waterFactor * floorFactor() * wallFactor * devFactor * constFactor * normCorrFactor
+      (BASE_RATE+amenPrem+infraPremium+parkingPremium+civicPremium+viewPremium)
+      *ageFactor*waterFactor*floorFactor()*wallFactor*devFactor*constFactor*normCorrFactor
     );
-    const totalArea = area;
-    const total = rate * totalArea;
-    return { rate, total, low: Math.round(total * 0.87), high: Math.round(total * 1.14) };
+    const total = rate*(isPlot?plotArea:area);
+    return {rate, total, low:Math.round(total*0.87), high:Math.round(total*1.14)};
   };
 
+  // ── GST calculation (new feature) ─────────────────────────────────────────
+  const calcGST = (propValue) => {
+    // Under-construction: 5% GST (1% for affordable housing < 45L)
+    // Ready to move: No GST
+    if(constructionStatus==="Ready to Move / Possession") return {rate:0, amount:0, note:"No GST for ready-to-move properties"};
+    const est = propValue||calcEstimate().total;
+    const isAffordable = est <= 4500000; // 45L
+    const gstRate = isAffordable ? 1 : 5;
+    const gstAmount = Math.round(est*gstRate/100);
+    return {
+      rate:    gstRate,
+      amount:  gstAmount,
+      note:    isAffordable
+        ? `1% GST (affordable housing <₹45L) → ₹${fmtL(gstAmount)}`
+        : `5% GST (under-construction) → ₹${fmtL(gstAmount)}`,
+      total:   est+gstAmount,
+    };
+  };
+
+  // ── Auto-maintenance calculation ───────────────────────────────────────────
+  const autoMaintCalc = () => {
+    const amenCount = amenityMode==="count" ? amenityCount : selAmenities.length;
+    const amenFactor = amenCount<=10?1.0:amenCount<=25?1.4:amenCount<=45?1.9:2.5;
+    const scaleFactor = totalFlatsInBuilding<=50?1.15:totalFlatsInBuilding<=200?1.0:totalFlatsInBuilding<=500?0.88:0.78;
+    const ageFactorM = age==="New (0-2 yrs)"?0.85:age==="Recent (3-5 yrs)"?1.0:age==="Mid (6-10 yrs)"?1.2:age==="Old (11-20 yrs)"?1.45:1.7;
+    const monthly = Math.round(2.2*amenFactor*scaleFactor*ageFactorM*area);
+    const tierCagr = BASE_RATE>=8000?9.5:BASE_RATE>=4500?11:BASE_RATE>=3000?13:14.5;
+    const devBoost = (DEVELOPER_TIERS||{})[developer]>=1.15?1.5:0;
+    const approvalPenalty = (APPROVAL_IMPACT||{})[approvalType]<0.85?-2:0;
+    const cagr = Math.round((tierCagr+devBoost+approvalPenalty)*10)/10;
+    const taxRate = getPropertyTaxRate ? getPropertyTaxRate(approvalState||detectStateFromCity(city)) : 0.1;
+    const tax = Math.round(calcEstimate().total*taxRate/100);
+    return {monthly, annual:monthly*12, cagr, tax, taxRate};
+  };
+
+  // ── Main analysis call ─────────────────────────────────────────────────────
   const analyze = async () => {
-    if (!locality.trim()) { setError("Please enter locality"); return; }
+    if(!locality.trim()) { setError("Please enter locality"); return; }
     setLoading(true); setResult(null); setError(""); setShowFeedback(false);
     const est = calcEstimate();
-    const amenList = amenityMode === "count"
-      ? amenityCount + " amenities (count-based)"
-      : selAmenities.map(id => ALL_AMENITIES.find(x=>x.id===id)?.label).filter(Boolean).join(", ");
-    const infraList = selInfra.map(id => INFRA_ITEMS.find(x=>x.id===id)?.label).filter(Boolean).join(", ");
-    const goodCivic = civicGood.map(id=>CIVIC_FACTORS.find(x=>x.id===id)?.label).filter(Boolean).join(", ");
-    const badCivic = civicBad.map(id=>CIVIC_FACTORS.find(x=>x.id===id)?.label).filter(Boolean).join(", ");
-    const corrNote = priceCorrections.length > 0 ? `User has corrected prices ${priceCorrections.length} time(s). Applied correction factor: ${normCorrFactor.toFixed(2)}.` : "";
-    const isUC = constructionStatus !== "Ready to Move / Possession";
+    const gst = calcGST(est.total);
+    const amenList = amenityMode==="count"
+      ? amenityCount+" amenities (count-based)"
+      : selAmenities.map(id=>ALL_AMENITIES.find(x=>x.id===id)?.label).filter(Boolean).join(", ");
+    const infraList = selInfra.map(id=>(INFRA_ITEMS||[]).find(x=>x.id===id)?.label).filter(Boolean).join(", ");
+    const goodCivic = (CIVIC_FACTORS||[]).filter(f=>f.positive&&civicGood.includes(f.id)).map(f=>f.label).join(", ");
+    const badCivic  = (CIVIC_FACTORS||[]).filter(f=>!f.positive&&civicBad.includes(f.id)).map(f=>f.label).join(", ");
+    const isUC = constructionStatus!=="Ready to Move / Possession";
 
-    try {
-      const prompt = `You are an expert Indian real estate valuation AI with deep knowledge of Indian cities, localities, builders, and market trends.
+    const prompt = `You are an expert Indian real estate valuation AI with deep knowledge of Indian cities, localities, builders, and market trends.
 Today's date: ${new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}.
 
-PRICING ACCURACY: market_rate_sqft MUST be a realistic figure for this EXACT locality and property type, based on real transaction ranges and builder pricing you know of — not a generic city average. A formula estimate is provided below as a reference point only; override it with your own market knowledge where you are confident it differs, and explain the gap in verdict_reason.
+PRICING ACCURACY: market_rate_sqft MUST be realistic for this EXACT locality — not a generic city average. Override the formula estimate with your market knowledge where confident.
 
 Property: ${propType} | Location: ${locality}, ${city}, India
 Config: ${isPlot?"Plot":bhk}, ${isPlot?plotArea+" "+plotAreaUnit:area+" sqft"} (${isPlot?"land":areaType})
 ${!isPlot?"Floor: "+selectedFloor+" of "+totalFloors+" | Blocks: "+totalBlocks+" | Common Walls: "+commonWalls:""}
-${!isPlot&&!isVilla?"Total Flats in Building: "+totalFlatsInBuilding+" (Traffic: "+(totalFlatsInBuilding<=50?"Low density":totalFlatsInBuilding<=200?"Medium":totalFlatsInBuilding<=500?"High density":"Very high - major traffic issues")+")":""}
+${!isPlot&&!isVilla?"Total Flats: "+totalFlatsInBuilding+" ("+( totalFlatsInBuilding<=50?"Low density":totalFlatsInBuilding<=200?"Medium":totalFlatsInBuilding<=500?"High density":"Very high density")+")":""}
 Building: ${buildingType} | Developer: ${developer}${customDevPremium?" (+"+customDevPremium+"% premium)":""}
-Construction: ${constructionStatus}${constructionStatus!=="Ready to Move / Possession"?" | Completion: "+completionYear:""}
+Construction: ${constructionStatus}${isUC?" | Target: "+completionYear:""}
 Approval: ${approvalType} | Legal: ${legalStatus} | Quality: ${constructionQuality}
 Community: ${communityType} | Ventilation: ${ventilation}
 ${!isPlot?"Balconies: "+noBalconies+" | Servant Room: "+(hasServantRoom?"Yes":"No")+" | Duplex: "+(hasDuplex?"Yes":"No"):""}
 Views: ${[hasLakeView&&"Lake View (+5-10%)",hasGardenView&&"Garden View (+3-5%)",hasParkView&&"Park View (+2-4%)",hasCityView&&"City View (+3-6%)"].filter(Boolean).join(", ")||"No premium view"}
 Parking: ${carParking} | Water: ${waterQuality} | Age: ${!isPlot?age:"NA"}
-Maintenance: ${maintenanceCharge?"Rs "+maintenanceCharge+" "+maintenanceType:"Not specified"}
-Amenities: ${amenityMode==="count"?amenityCount+" amenities (count)":selAmenities.map(id=>ALL_AMENITIES.find(x=>x.id===id)?.label).filter(Boolean).slice(0,15).join(", ")||"Basic"}
-Infra nearby: ${selInfra.map(id=>INFRA_ITEMS.find(x=>x.id===id)?.label).filter(Boolean).join(", ")||"None selected"}
-Civic score: ${civicScore}/100 | Issues: ${civicBad.map(id=>CIVIC_FACTORS.find(x=>x.id===id)?.label).filter(Boolean).join(", ")||"None"}
-Formula est: Rs ${calcEstimate().rate.toLocaleString()}/sqft
-${userMinPrice&&userMaxPrice?"User-known range: Rs "+userMinPrice+"-"+userMaxPrice+"/sqft":""}
+Maintenance: ${maintenanceCharge?"₹"+maintenanceCharge+" "+maintenanceType:"Auto-calculated"}
+Amenities (${amenityMode==="count"?amenityCount+" count":selAmenities.length+" selected"}): ${amenList.slice(0,400)}
+Infra nearby: ${infraList||"None selected"}
+Civic score: ${civicScore}/100 | Good: ${goodCivic||"None"} | Issues: ${badCivic||"None"}
+Formula est: ₹${est.rate.toLocaleString()}/sqft → ₹${fmtL(est.total)} (range: ₹${fmtL(est.low)}–₹${fmtL(est.high)})
+GST: ${gst.note}
+${userMinPrice&&userMaxPrice?"User-known range: ₹"+userMinPrice+"-"+userMaxPrice+"/sqft":""}
 ${priceCorrections.length>0?"User corrections: "+priceCorrections.length+", factor: "+normCorrFactor.toFixed(2):""}
-
-IMPORTANT CONTEXT:
-- Approval ${approvalType} typically impacts price by ${Math.round(((APPROVAL_IMPACT[approvalType]||1)-1)*100)}% vs market average
-- Floor-wise price increase: approximately Rs 25/sqft per floor above ground
-- ${hasLakeView?"Lake view typically commands 5-10% premium in Indian markets":""}
-- ${hasDuplex?"Duplex units command 8-15% premium over regular floors":""}
-- Location spelling variants: user typed "${locality}" - account for common typos/variations
 
 Return ONLY raw JSON (no markdown, start with {, end with }):
 {
-  "location_name_corrected": "correct official name if typo detected, else same",
-  "market_rate_sqft": integer,
-  "total_value": integer,
-  "low_estimate": integer,
-  "high_estimate": integer,
+  "location_name_corrected": "correct name if typo, else same",
+  "market_rate_sqft": <integer>,
+  "total_value": <integer>,
+  "low_estimate": <integer>,
+  "high_estimate": <integer>,
   "accuracy_verdict": "Undervalued or Fair Value or Overvalued or Premium",
   "verdict_reason": "1 sentence",
-  "ai_vs_formula_gap_pct": integer,
+  "ai_vs_formula_gap_pct": <integer>,
   "locality_insight": "2 sentences about this market",
   "price_trend": "Rising or Stable or Declining",
   "trend_reason": "1 sentence",
-  "yoy_appreciation_pct": number,
-  "civic_grievances_nearby": ["known real issue 1 for this area","issue 2","issue 3"],
+  "yoy_appreciation_pct": <number>,
+  "civic_grievances_nearby": ["real issue 1","issue 2","issue 3"],
   "civic_impact": "1 sentence",
-  "water_impact": "1 sentence on water quality for this area",
+  "water_impact": "1 sentence",
   "amenity_score_impact": "1 sentence",
-  "approval_impact": "1 sentence on how ${approvalType} affects price and resale",
-  "legal_status_note": "1 sentence on legal status risk",
+  "approval_impact": "1 sentence on how ${approvalType} affects price",
+  "legal_status_note": "1 sentence",
   "construction_quality_note": "1 sentence",
-  "view_premium_note": "1 sentence if any view selected else null",
-  "maintenance_assessment": "1 sentence if maintenance specified else null",
-  "traffic_density_note": "1 sentence on ${totalFlatsInBuilding} flats traffic impact",
-  "floor_impact": "mention Rs 25/floor price increase and impact of floor ${selectedFloor}",
+  "view_premium_note": ${hasLakeView||hasCityView||hasGardenView?"\"1 sentence\"":"null"},
+  "maintenance_assessment": ${maintenanceCharge?"\"1 sentence\"":"null"},
+  "traffic_density_note": "1 sentence on ${totalFlatsInBuilding} flats impact",
+  "floor_impact": "mention floor ${selectedFloor} pricing impact",
   "developer_tier_impact": "1 sentence",
-  "sunlight_assessment": "1 sentence on sunlight based on floor and building type",
+  "sunlight_assessment": "1 sentence on floor/orientation sunlight",
   "elder_friendliness": "Good or Average or Poor - reason",
   "kid_friendliness": "Good or Average or Poor - reason",
-  "price_history": [{"year":2016,"price_sqft":2800},{"year":2017,"price_sqft":3100}...last 8-9 years for this locality],
-  "upcoming_civic_projects": [{"project":"project name","status":"announced or under construction","expected_completion":"2026","score_impact":"+5","price_impact":"+8-12% on completion"}],
-  "comparable_projects": [{"name":"Project Name","rate_sqft":"Rs 7500/sqft","maps_link":"https://www.google.com/maps/search/Project+Name+${locality}+${city}+India"}],
+  "price_history": [{"year":2017,"price_sqft":2800},{"year":2018,"price_sqft":3100},{"year":2019,"price_sqft":3400},{"year":2020,"price_sqft":3200},{"year":2021,"price_sqft":3600},{"year":2022,"price_sqft":4100},{"year":2023,"price_sqft":4700},{"year":2024,"price_sqft":5400}],
+  "upcoming_civic_projects": [{"project":"name","status":"announced or UC","expected_completion":"2026","score_impact":"+5","price_impact":"+8-12%"}],
+  "comparable_projects": [{"name":"Project Name","rate_sqft":"₹7,500/sqft","distance":"0.8 km away","maps_link":"https://www.google.com/maps/search/ProjectName+${locality}+${city}"},{"name":"Another Project","rate_sqft":"₹6,800/sqft","distance":"1.2 km away","maps_link":"https://www.google.com/maps/search/AnotherProject+${locality}+${city}"}],
+  "gst_applicable": ${isUC?"true":"false"},
+  "gst_rate_pct": ${isUC?gst.rate:0},
+  "gst_amount": ${isUC?gst.amount:0},
+  "gst_note": "${gst.note}",
+  "total_with_gst": ${isUC?gst.total:est.total},
   "negotiation_tip": "1 actionable sentence",
   "red_flags": ["flag 1","flag 2","flag 3"],
   "resale_potential": "High or Medium or Low",
-  "rental_yield_pct": number,
+  "rental_yield_pct": <number>,
   "best_for": "End User or Investor or Both",
-  "completion_price_estimate": ${constructionStatus !== "Ready to Move / Possession" ? "integer (price at possession)" : "null"},
-  "completion_appreciation_pct": ${constructionStatus !== "Ready to Move / Possession" ? "number" : "null"},
-  "gst_note": "${constructionStatus !== "Ready to Move / Possession" ? "1 sentence on GST for under-construction" : "null"}",
-  "investment_recommendation": "${constructionStatus !== "Ready to Move / Possession" ? "1 sentence investor advice" : "null"}"
+  "completion_price_estimate": ${isUC?"<integer>":"null"},
+  "completion_appreciation_pct": ${isUC?"<number>":"null"},
+  "investment_recommendation": "${isUC?"1 sentence investor advice":"null"}"
 }`;
 
-      const cacheKey="pricer_"+[locality,city,propType,isPlot?plotArea:area,isPlot?plotAreaUnit:bhk,selectedFloor,totalFloors,buildingType,developer,constructionStatus,approvalType,legalStatus,constructionQuality,amenityMode==="count"?amenityCount:selAmenities.slice().sort().join(","),carParking,waterQuality,hasLakeView,hasGardenView,hasCityView,hasDuplex].join("_").toLowerCase().replace(/[^a-z0-9_]+/g,"_");
+    const cacheKey = "pricer_"+ [locality,city,propType,isPlot?plotArea:area,bhk,selectedFloor,totalFloors,developer,constructionStatus,approvalType,legalStatus,amenityMode==="count"?amenityCount:selAmenities.slice().sort().join(","),carParking,waterQuality,hasLakeView,hasCityView,hasDuplex].join("_").toLowerCase().replace(/[^a-z0-9_]+/g,"_");
+
+    try {
       const res = await fetch(API_ENDPOINT, {
-        method: "POST", headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({model:"claude-sonnet-4-6", max_tokens:10000, temperature:0, messages:[{role:"user",content:prompt}],cacheKey,cacheType:"pricer"}),
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({model:"claude-sonnet-4-6", max_tokens:8000, temperature:0,
+          messages:[{role:"user",content:prompt}], cacheKey, cacheType:"pricer"}),
       });
       const d = await res.json();
-      if (d.error) { setError("API: "+d.error.message); setLoading(false); return; }
-      const text = d.content?.map(b=>b.text||"").join("") || "";
+      if(d.error) { setError("API: "+d.error.message); setLoading(false); return; }
+      const text = d.content?.map(b=>b.text||"").join("")||"";
       const parsed = parseJSON(text);
-      if (parsed) {
-        setResult({...parsed, our_estimate: est, isUC, constructionStatus});
+      if(parsed) {
+        setResult({...parsed, our_estimate:est, isUC, constructionStatus, gst});
         setShowFeedback(true);
-      } else setError("Parse failed. Raw: "+text.slice(0,300));
+      } else {
+        // Formula fallback
+        setResult({
+          market_rate_sqft:est.rate, total_value:est.total,
+          low_estimate:est.low, high_estimate:est.high,
+          accuracy_verdict:"Fair Value", verdict_reason:"Formula-based estimate",
+          ai_vs_formula_gap_pct:0, locality_insight:"AI analysis unavailable. Formula estimate shown.",
+          price_trend:"Stable", yoy_appreciation_pct:8,
+          comparable_projects:[], red_flags:[],
+          resale_potential:"Medium", rental_yield_pct:3.5, best_for:"End User",
+          gst_applicable:isUC, gst_rate_pct:gst.rate, gst_amount:gst.amount,
+          gst_note:gst.note, total_with_gst:isUC?gst.total:est.total,
+          our_estimate:est, isUC, constructionStatus, gst,
+        });
+        setError("Parse failed — formula estimate shown. Raw: "+text.slice(0,200));
+      }
     } catch(e) { setError("Error: "+e.message); }
     setLoading(false);
   };
 
   const submitCorrection = () => {
     const min = parseFloat(userMinPrice), max = parseFloat(userMaxPrice);
-    if (!min || !max || !result) return;
-    const userAvg = (min + max) / 2;
-    const factor = userAvg / result.market_rate_sqft;
-    setPriceCorrections(p => [...p, {city, locality, propType, factor, userMin:min, userMax:max, aiRate:result.market_rate_sqft}]);
-    setFeedback({type:"learned", msg:`Saved! AI rate ₹${result.market_rate_sqft}/sqft → Your range ₹${min}-₹${max}. Future estimates adjusted by ${((factor-1)*100).toFixed(1)}%.`});
+    if(!min||!max||!result) return;
+    const factor = ((min+max)/2) / result.market_rate_sqft;
+    setPriceCorrections(p=>[...p,{city,locality,propType,factor,userMin:min,userMax:max,aiRate:result.market_rate_sqft}]);
+    setFeedback({type:"learned",msg:`Saved! AI rate ₹${result.market_rate_sqft}/sqft → Your range ₹${min}-₹${max}. Factor: ${((factor-1)*100).toFixed(1)}%.`});
     setShowFeedback(false);
   };
 
   const verdictColor = (v) => !v?C.muted:v==="Undervalued"?C.green:v==="Fair Value"?C.blue:v==="Overvalued"?C.red:C.amber;
-
-  const sectionBtn = (id, label) => (
+  const sectionBtn = (id,label) => (
     <button key={id} onClick={()=>setActiveSection(id)}
       style={{padding:"7px 14px",fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,
         background:activeSection===id?C.blue:"#F1F5F9",color:activeSection===id?"#fff":C.muted,
-        border:"none",borderRadius:20,cursor:"pointer"}}>
-      {label}
-    </button>
+        border:"none",borderRadius:20,cursor:"pointer"}}>{label}</button>
   );
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // OPTION B RENDER — 2×3 property grid + collapsible grouped cards
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // Collapsible group state
+  const [openGroups, setOpenGroups] = React.useState({
+    location:true, unit:true, building:true, legal:true,
+    quality:true, views:true, maintenance:true
+  });
+  const toggleGroup = (k) => setOpenGroups(p => ({...p, [k]: !p[k]}));
+
+  const G = ({id, icon, title, badge, children}) => {
+    const open = openGroups[id];
+    const hasBadge = badge != null;
+    return (
+      <div style={{background:"#fff",border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden",marginBottom:6}}>
+        <div onClick={()=>toggleGroup(id)}
+          style={{padding:"10px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",
+            cursor:"pointer",background:open?"#fff":"#FAFBFC"}}>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:13}}>{icon}</span>
+            <span style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,color:C.dark}}>{title}</span>
+            {hasBadge && <span style={{fontSize:9,background:"#EFF6FF",color:C.blue,
+              padding:"1px 7px",borderRadius:8,fontWeight:600}}>{badge}</span>}
+          </div>
+          <span style={{color:C.muted,fontSize:12,transform:open?"rotate(0)":"rotate(180deg)",
+            transition:"transform .2s"}}>{open?"▲":"▼"}</span>
+        </div>
+        {open && <div style={{padding:"10px 12px",display:"flex",flexDirection:"column",gap:8,
+          borderTop:`1px solid ${C.border}`}}>{children}</div>}
+      </div>
+    );
+  };
+
+  const PROP_TYPES_FULL = [
+    {type:"Apartment / Flat",      icon:"🏢", sub:"Flats & units"},
+    {type:"Villa / Independent House", icon:"🏡", sub:"Independent homes"},
+    {type:"Plot / Land",           icon:"🏗️", sub:"Bare land"},
+    {type:"Penthouse",             icon:"🏙️", sub:"Top floor luxury"},
+    {type:"Row House / Townhouse", icon:"🏘️", sub:"Townhouse / linked"},
+    {type:"Commercial",            icon:"🏪", sub:"Shops & offices"},
+  ];
+
+  const SECTION_CONFIG = [
+    {id:"property",  label:"Property",  icon:"🏠"},
+    {id:"amenities", label:"Amenities", icon:"✨"},
+    {id:"civic",     label:"Civic",     icon:"🏛️"},
+    {id:"pricing",   label:"Pricing",   icon:"💰"},
+    {id:"uds",       label:"UDS & Loan",icon:"📜"},
+  ];
+  const sectionIdx = SECTION_CONFIG.findIndex(s=>s.id===activeSection);
+
+  // Live estimate bar (always visible in full valuation mode)
+  const LiveEstimate = () => {
+    if(!locality.trim() && !city) return null;
+    const est = calcEstimate();
+    const gst = calcGST(est.total);
+    if(isNaN(est.rate) || est.rate <= 0) return null;
+    return (
+      <div style={{background:"linear-gradient(135deg,#0F1B2D,#1E3A5F)",borderRadius:10,
+        padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",
+        position:"sticky",bottom:0,zIndex:10}}>
+        <div>
+          <div style={{color:"#94A3B8",fontSize:9,fontFamily:"Inter,sans-serif",
+            textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Live estimate</div>
+          <div style={{color:"#F8FAFB",fontFamily:"serif",fontSize:16}}>
+            {fmt(est.low)} – {fmtCr(est.high)}
+          </div>
+          {gst.amount>0 && <div style={{color:"#FCD34D",fontSize:10,fontFamily:"Inter,sans-serif",marginTop:1}}>
+            + GST {gst.rate}% → {fmt(gst.total)}
+          </div>}
+        </div>
+        <div style={{textAlign:"right"}}>
+          <div style={{color:"#34D399",fontSize:14,fontWeight:700,fontFamily:"Inter,sans-serif"}}>
+            ₹{est.rate?.toLocaleString()}/sqft
+          </div>
+          <div style={{color:"#94A3B8",fontSize:9,fontFamily:"Inter,sans-serif",marginTop:1}}>
+            Updates as you fill
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:14}}>
-      {/* Property type selector */}
-      <div style={{background:"#fff",borderRadius:12,border:`1px solid ${C.border}`,padding:"16px"}}>
-        <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:14,color:C.dark,marginBottom:12}}>
-          🏘️ Property Price Analyser — Apartments · Villas · Plots
-        </div>
-        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>
-          {PROPERTY_TYPES.map(pt => (
-            <button key={pt} onClick={()=>{setPropType(pt);setLocality("");setUserMinPrice("");setUserMaxPrice("");setResult(null);setError("");setFeedback(null);setSelAmenities(["security_24x7","cctv","power_backup_full","lift","covered_parking","water_24x7"]);setApprovalType("BBMP A Khata");setLegalStatus("Clear Title");setHasLakeView(false);setHasGardenView(false);setHasParkView(false);setHasCityView(false);setHasDuplex(false);setHasServantRoom(false);setMaintenanceCharge("");}}
-              style={{background:propType===pt?C.navy:"#F1F5F9",color:propType===pt?"#fff":C.muted,
-                border:`1px solid ${propType===pt?C.navy:C.border}`,borderRadius:20,
-                padding:"5px 12px",fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,cursor:"pointer"}}>
-              {pt}
-            </button>
-          ))}
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+
+      {/* ── Mode toggle ── */}
+      <div style={{display:"flex",background:"#E2E8F0",borderRadius:11,padding:3,gap:3}}>
+        {[["quick","⚡ Quick Check"],["full","🔬 Full Valuation"]].map(([m,label])=>(
+          <button key={m} onClick={()=>{setMode(m);setResult(null);setError("");}}
+            style={{flex:1,padding:"9px 6px",borderRadius:9,border:"none",cursor:"pointer",
+              fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,
+              background:mode===m?"#fff":"transparent",color:mode===m?"#1E293B":"#64748B",
+              boxShadow:mode===m?"0 1px 5px rgba(0,0,0,.12)":"none"}}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════════
+          QUICK CHECK MODE
+      ══════════════════════════════════════════════════════════════════ */}
+      {mode==="quick" && (<>
+
+        {/* RERA search hero */}
+        <div style={{background:"linear-gradient(160deg,#0F1B2D,#1E3A5F)",borderRadius:14,padding:15}}>
+          <div style={{color:"#F8FAFB",fontFamily:"serif",fontSize:15,marginBottom:3}}>Search by project or builder</div>
+          <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:11,marginBottom:11,lineHeight:1.4}}>
+            {reraLoaded?"RERA status pulled automatically — no reg number needed":"Enter locality or project name to price"}
+          </div>
+          <div style={{display:"flex",gap:6,position:"relative"}}>
+            <input value={reraQuery} onChange={e=>searchRERA(e.target.value)}
+              placeholder="Prestige, Godrej, Brigade Utopia…"
+              style={{flex:1,background:"#fff",border:"none",borderRadius:9,padding:"10px 12px",
+                fontSize:13,fontFamily:"Inter,sans-serif",color:"#1E293B",outline:"none"}}/>
+            {reraQuery&&<button onClick={()=>{setReraQuery("");setReraResults([]);setReraProject(null);}}
+              style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",
+                background:"none",border:"none",color:"#94A3B8",cursor:"pointer",fontSize:16}}>×</button>}
+          </div>
+          {reraResults.length>0&&(
+            <div style={{background:"#fff",borderRadius:9,marginTop:6,overflow:"hidden",
+              boxShadow:"0 4px 16px rgba(0,0,0,.2)"}}>
+              {reraResults.map((p,i)=>(
+                <div key={i} onClick={()=>selectRERA(p)}
+                  style={{padding:"10px 13px",borderBottom:i<reraResults.length-1?"1px solid #F1F5F9":"none",cursor:"pointer"}}>
+                  <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:"#1E293B"}}>{p.project_name}</div>
+                  <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#64748B"}}>{p.company_name} · {p.city}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          {!reraLoaded&&(
+            <div style={{display:"flex",gap:5,marginTop:8,flexWrap:"wrap"}}>
+              {["Prestige","Godrej","Brigade","Sobha","Lodha"].map(s=>(
+                <span key={s} onClick={()=>searchRERA(s)}
+                  style={{background:"rgba(255,255,255,0.12)",color:"#CBD5E1",fontSize:10,
+                    padding:"3px 9px",borderRadius:12,cursor:"pointer",
+                    border:"1px solid rgba(255,255,255,0.15)"}}>
+                  {s}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* Section tabs */}
-        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
-          {[["property","🏠 Property"],["amenities","✨ Amenities"],["civic","🏛️ Civic & Infra"],["pricing","💰 Pricing"],["uds","📜 UDS & Loan"]].map(([id,l])=>sectionBtn(id,l))}
+        {/* RERA card */}
+        {reraProject&&(
+          <div style={{background:"#fff",border:"1.5px solid #2563EB",borderRadius:12,padding:13}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+              <div style={{fontFamily:"serif",fontSize:14,color:"#1E293B",flex:1,paddingRight:8}}>{reraProject.project_name}</div>
+              <span style={{flexShrink:0,fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:10,
+                background:reraProject.status==="Completed"?"#F0FDF4":"#EFF6FF",
+                color:reraProject.status==="Completed"?"#15803D":"#1D4ED8"}}>● {reraProject.status}</span>
+            </div>
+            <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#64748B",marginBottom:7}}>
+              {reraProject.company_name} · {reraProject.city}
+            </div>
+            {reraProject.rera_id&&reraProject.rera_id!=="—"&&(
+              <div style={{fontFamily:"monospace",fontSize:9.5,color:"#94A3B8",background:"#F8FAFB",
+                padding:"3px 8px",borderRadius:5,marginBottom:8}}>{reraProject.rera_id}</div>
+            )}
+            <a href={reraProject.direct_url} target="_blank" rel="noopener noreferrer"
+              style={{fontSize:11,color:"#2563EB",fontWeight:600,textDecoration:"none"}}>
+              View on {reraProject.state} RERA →
+            </a>
+          </div>
+        )}
+
+        {/* 4 quick inputs */}
+        <div style={{background:"#fff",border:`1px solid ${C.border}`,borderRadius:12,padding:13,
+          display:"flex",flexDirection:"column",gap:10}}>
+          {!reraProject&&(
+            <div>
+              <div style={LS}>Locality / Project</div>
+              <input value={locality} onChange={e=>setLocality(e.target.value)}
+                placeholder="e.g. Whitefield, Bengaluru" style={{...IS,width:"100%"}}/>
+            </div>
+          )}
+          <div style={{display:"flex",gap:8}}>
+            <div style={{flex:1}}><div style={LS}>Type</div>
+              <select value={propType} onChange={e=>setPropType(e.target.value)} style={IS}>
+                {(PROPERTY_TYPES||["Apartment / Flat","Villa / Independent House","Plot / Land","Penthouse","Row House / Townhouse"]).map(t=><option key={t}>{t}</option>)}
+              </select>
+            </div>
+            <div style={{flex:1}}><div style={LS}>Area (sqft)</div>
+              <input type="number" value={area}
+                onChange={e=>setArea(e.target.value===''?'':parseInt(e.target.value)||'')}
+                onBlur={e=>{const v=parseInt(e.target.value);setArea(v>0?v:1200);}} style={IS}/>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <div style={{flex:1}}><div style={LS}>City</div>
+              <input value={city} onChange={e=>setCity(e.target.value)} style={IS}/>
+            </div>
+            <div style={{flex:1}}><div style={LS}>Asking price ₹</div>
+              <input value={askingPrice} onChange={e=>setAskingPrice(e.target.value)} placeholder="Optional" style={IS}/>
+            </div>
+          </div>
         </div>
 
-        {/* SECTION: Property Details */}
-        {activeSection==="property" && (
-          <div style={{display:"flex",flexDirection:"column",gap:10}}>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-              <div><label style={LS}>City</label><input value={city} onChange={e=>setCity(e.target.value)} style={IS} placeholder="Bengaluru"/></div>
-              <div><label style={LS}>Locality / Area *</label><input value={locality} onChange={e=>setLocality(e.target.value)} style={IS} placeholder="e.g. Whitefield, Sarjapur, Kompally…"/></div>
-
-              {!isPlot && (
-                <>
-                  <div>
-                    <label style={LS}>BHK / Config</label>
-                    <select value={bhk} onChange={e=>setBhk(e.target.value)} style={IS}>
-                      {BHK_OPTIONS.map(k=><option key={k}>{k}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={LS}>Area Type</label>
-                    <select value={areaType} onChange={e=>setAreaType(e.target.value)} style={IS}>
-                      {AREA_TYPES.map(k=><option key={k}>{k}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={LS}>Area (sqft): <strong>{area.toLocaleString()}</strong></label>
-                    <input type="range" min={300} max={8000} step={50} value={area} onChange={e=>setArea(+e.target.value)} style={{width:"100%",marginTop:6}}/>
-                  </div>
-                  <div>
-                    <label style={LS}>Building Type</label>
-                    <select value={buildingType} onChange={e=>setBuildingType(e.target.value)} style={IS}>
-                      {BUILDING_TYPES.map(k=><option key={k}>{k}</option>)}
-                    </select>
-                  </div>
-                  {!isVilla && (
-                    <>
-                      <div>
-                        <label style={LS}>Total Floors in Building: <strong>{totalFloors}</strong></label>
-                        <input type="range" min={1} max={60} value={totalFloors} onChange={e=>{setTotalFloors(+e.target.value);if(selectedFloor>+e.target.value)setSelectedFloor(+e.target.value);}} style={{width:"100%",marginTop:6}}/>
-                      </div>
-                      <div>
-                        <label style={LS}>Your Floor: <strong>{selectedFloor === 0 ? "Ground (G)" : selectedFloor}</strong></label>
-                        <input type="range" min={0} max={totalFloors} value={selectedFloor} onChange={e=>setSelectedFloor(+e.target.value)} style={{width:"100%",marginTop:6}}/>
-                      </div>
-                    </>
-                  )}
-                  <div>
-                    <label style={LS}>No. of Blocks: <strong>{totalBlocks}</strong></label>
-                    <input type="range" min={1} max={30} value={totalBlocks} onChange={e=>setTotalBlocks(+e.target.value)} style={{width:"100%",marginTop:6}}/>
-                  </div>
-                  <div>
-                    <label style={LS}>Common Walls</label>
-                    <select value={commonWalls} onChange={e=>setCommonWalls(e.target.value)} style={IS}>
-                      {COMMON_WALLS.map(k=><option key={k}>{k}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={LS}>Car Parkings: <strong>{carParking}</strong></label>
-                    <input type="range" min={0} max={4} value={carParking} onChange={e=>setCarParking(+e.target.value)} style={{width:"100%",marginTop:6}}/>
-                  </div>
-                  <div>
-                    <label style={LS}>Water Quality</label>
-                    <select value={waterQuality} onChange={e=>setWaterQuality(e.target.value)} style={IS}>
-                      {WATER_QUALITY.map(k=><option key={k}>{k}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={LS}>Building Age</label>
-                    <select value={age} onChange={e=>setAge(e.target.value)} style={IS}>
-                      {["New (0-2 yrs)","Recent (3-5 yrs)","Mid (6-10 yrs)","Old (11-20 yrs)","Very Old (20+ yrs)"].map(k=><option key={k}>{k}</option>)}
-                    </select>
-                  </div>
-                </>
+        {/* Quick result */}
+        {(locality.trim()||reraProject||area!==1200)&&(()=>{
+          const est=calcEstimate(); const gst=calcGST(est.total);
+          if(isNaN(est.rate)||est.rate<=0) return null;
+          return (
+            <div style={{background:"linear-gradient(135deg,#0F1B2D,#1E293B)",borderRadius:13,padding:15}}>
+              <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:11,marginBottom:3}}>
+                Fair market estimate · {city}
+              </div>
+              <div style={{color:"#F8FAFB",fontFamily:"serif",fontSize:26,marginBottom:3}}>
+                {fmt(est.low)} – {fmtCr(est.high)}
+              </div>
+              <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:11,marginBottom:gst.amount?6:10}}>
+                ₹{est.rate.toLocaleString()}/sqft · formula-based
+              </div>
+              {gst.amount>0&&(
+                <div style={{color:"#FCD34D",fontFamily:"Inter,sans-serif",fontSize:11,marginBottom:10}}>
+                  + GST ({gst.rate}%) = {fmt(gst.total)} total
+                </div>
               )}
-
-              {isPlot && (
-                <>
-                  <div>
-                    <label style={LS}>Plot Area: <strong>{plotArea.toLocaleString()} {plotAreaUnit}</strong></label>
-                    <input type="range" min={100} max={20000} step={100} value={plotArea} onChange={e=>setPlotArea(+e.target.value)} style={{width:"100%",marginTop:6}}/>
-                  </div>
-                  <div>
-                    <label style={LS}>Area Unit</label>
-                    <select value={plotAreaUnit} onChange={e=>setPlotAreaUnit(e.target.value)} style={IS}>
-                      {["sqft","sqyd","guntha","acre","cents"].map(k=><option key={k}>{k}</option>)}
-                    </select>
-                  </div>
-                </>
-              )}
-            </div>
-
-            {/* Developer & Construction */}
-            <div style={{background:C.bg,borderRadius:8,padding:"12px",display:"flex",flexDirection:"column",gap:8}}>
-              <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark}}>Developer & Construction</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                <div>
-                  <label style={LS}>Developer Tier</label>
-                  <select value={developer} onChange={e=>setDeveloper(e.target.value)} style={IS}>
-                    {Object.keys(DEVELOPER_TIERS).map(k=><option key={k}>{k}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label style={LS}>Custom Developer Premium (%)</label>
-                  <input value={customDevPremium} onChange={e=>setCustomDevPremium(e.target.value)} style={IS} placeholder="e.g. 25 for +25% (optional)"/>
-                </div>
-                {!isPlot&&<div>
-                  <label style={LS}>Construction Status</label>
-                  <select value={constructionStatus} onChange={e=>setConstructionStatus(e.target.value)} style={IS}>
-                    {CONSTRUCTION_STATUS.map(k=><option key={k}>{k}</option>)}
-                  </select>
-                </div>}
-                {constructionStatus !== "Ready to Move / Possession" && (
-                  <div>
-                    <label style={LS}>Expected Completion Year</label>
-                    <select value={completionYear} onChange={e=>setCompletionYear(+e.target.value)} style={IS}>
-                      {[2025,2026,2027,2028,2029,2030].map(y=><option key={y}>{y}</option>)}
-                    </select>
-                  </div>
-                )}
+              {askingPrice&&(()=>{
+                const asking=parseFloat(askingPrice.replace(/[₹,CcRr]/gi,'').trim())
+                  *(askingPrice.toLowerCase().includes('l')?1e5:askingPrice.toLowerCase().includes('c')?1e7:1);
+                if(!asking) return null;
+                const diff=((asking-est.total)/est.total*100).toFixed(1);
+                const fair=Math.abs(parseFloat(diff))<10, over=parseFloat(diff)>10;
+                return <div style={{background:"rgba(255,255,255,.08)",borderRadius:8,padding:"9px 11px",
+                  fontFamily:"Inter,sans-serif",fontSize:11,color:"#F8FAFB",marginBottom:10}}>
+                  {fair?"✅ Asking price is within fair range":over?`⚠️ ${diff}% above estimate`:`💡 ${Math.abs(diff)}% below — good value`}
+                </div>;
+              })()}
+              <div style={{display:"flex",gap:7}}>
+                <button onClick={()=>{setMode("full");setResult(null);}}
+                  style={{flex:1,padding:9,borderRadius:8,fontSize:11,fontWeight:700,fontFamily:"Inter,sans-serif",
+                    cursor:"pointer",background:"#2563EB",color:"#fff",border:"none"}}>
+                  Full breakdown →
+                </button>
+                <button onClick={()=>{setMode("full");setActiveSection("uds");setResult(null);}}
+                  style={{flex:1,padding:9,borderRadius:8,fontSize:11,fontWeight:700,fontFamily:"Inter,sans-serif",
+                    cursor:"pointer",background:"rgba(255,255,255,.1)",color:"#F8FAFB",border:"none"}}>
+                  UDS & Loan →
+                </button>
               </div>
             </div>
+          );
+        })()}
 
-            {/* Legal, Quality, Community, Views */}
-            <div style={{background:C.bg,borderRadius:8,padding:"12px",display:"flex",flexDirection:"column",gap:8}}>
-              <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark}}>Legal, Quality & Views</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                <div>
-                  <label style={LS}>State / Region (auto-detected from City)</label>
-                  <select value={approvalState||detectStateFromCity(city)} onChange={e=>setApprovalState(e.target.value)} style={IS}>
-                    {Object.keys(APPROVAL_TYPES).map(k=><option key={k}>{k}</option>)}
-                  </select>
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,marginTop:4}}>
-                    Auto-detected from "{city}" — change if incorrect
+      </>)}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          FULL VALUATION — OPTION B DESIGN
+      ══════════════════════════════════════════════════════════════════ */}
+      {mode==="full"&&(
+        <div style={{background:"#fff",borderRadius:12,border:`1px solid ${C.border}`,padding:14}}>
+
+          {/* Header */}
+          <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.dark,marginBottom:10,
+            display:"flex",alignItems:"center",gap:6}}>
+            🏘️ Property Price Analyser
+          </div>
+
+          {/* ── 2×3 Property type grid (Option B design) ── */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:12}}>
+            {PROP_TYPES_FULL.map(({type,icon,sub})=>{
+              const sel = propType===type;
+              return (
+                <button key={type} onClick={()=>{setPropType(type);resetForm();}}
+                  style={{background:sel?"#EFF6FF":"#F8FAFB",
+                    border:`1.5px solid ${sel?C.blue:C.border}`,
+                    borderRadius:10,padding:"10px 10px",cursor:"pointer",
+                    textAlign:"left",display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:20,flexShrink:0}}>{icon}</span>
+                  <div>
+                    <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,
+                      color:sel?"#1D4ED8":C.dark,lineHeight:1.2}}>{type}</div>
+                    <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,marginTop:1}}>{sub}</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* ── Section tabs (scrollable) ── */}
+          <div style={{display:"flex",gap:5,overflowX:"auto",paddingBottom:2,marginBottom:10}}>
+            {SECTION_CONFIG.map((s,i)=>{
+              const sel = activeSection===s.id;
+              return (
+                <button key={s.id} onClick={()=>setActiveSection(s.id)}
+                  style={{flexShrink:0,padding:"7px 12px",borderRadius:16,border:"none",cursor:"pointer",
+                    fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:700,
+                    background:sel?C.blue:"#F1F5F9",color:sel?"#fff":C.muted}}>
+                  {s.icon} {s.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* ── Section progress bar ── */}
+          <div style={{display:"flex",alignItems:"center",gap:4,marginBottom:12}}>
+            {SECTION_CONFIG.map((s,i)=>(
+              <div key={s.id} style={{flex:1,height:3,borderRadius:2,
+                background:i<sectionIdx?C.blue:i===sectionIdx?"#0F1B2D":C.border}}/>
+            ))}
+            <span style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,
+              whiteSpace:"nowrap",marginLeft:5,fontWeight:600}}>
+              {sectionIdx+1}/5
+            </span>
+          </div>
+
+          {/* ════════════════════════════════════════
+              SECTION: PROPERTY — collapsible groups
+          ════════════════════════════════════════ */}
+          {activeSection==="property"&&(
+            <div style={{display:"flex",flexDirection:"column",gap:0}}>
+
+              {/* Group 1: Location */}
+              <G id="location" icon="📍" title="Location" badge={locality?"filled":null}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <div><label style={LS}>City</label>
+                    <input value={city} onChange={e=>setCity(e.target.value)} style={IS} placeholder="Bengaluru"/>
+                  </div>
+                  <div><label style={LS}>Locality / Area *</label>
+                    <input value={locality} onChange={e=>setLocality(e.target.value)} style={IS} placeholder="e.g. Whitefield"/>
                   </div>
                 </div>
-                <div>
-                  <label style={LS}>Approval / Khata Type</label>
-                  <select value={approvalType} onChange={e=>setApprovalType(e.target.value)} style={IS}>
-                    {(APPROVAL_TYPES[approvalState||detectStateFromCity(city)]||APPROVAL_TYPES["Other / Generic"]).map(k=><option key={k}>{k}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label style={LS}>Legal Status</label>
-                  <select value={legalStatus} onChange={e=>setLegalStatus(e.target.value)} style={IS}>
-                    {LEGAL_STATUSES.map(k=><option key={k}>{k}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label style={LS}>Construction Quality</label>
-                  <select value={constructionQuality} onChange={e=>setConstructionQuality(e.target.value)} style={IS}>
-                    {CONSTRUCTION_QUALITIES.map(k=><option key={k}>{k}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label style={LS}>Community Type</label>
-                  <select value={communityType} onChange={e=>setCommunityType(e.target.value)} style={IS}>
-                    {COMMUNITY_TYPES.map(k=><option key={k}>{k}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label style={LS}>Ventilation</label>
-                  <select value={ventilation} onChange={e=>setVentilation(e.target.value)} style={IS}>
-                    {VENTILATION_OPTIONS.map(k=><option key={k}>{k}</option>)}
-                  </select>
-                </div>
-                {!isPlot&&<div>
-                  <label style={LS}>No. of Balconies: <strong>{noBalconies}</strong></label>
-                  <input type="range" min={0} max={4} value={noBalconies} onChange={e=>setNoBalconies(+e.target.value)} style={{width:"100%",marginTop:6}}/>
-                </div>}
-                {!isPlot&&!isVilla&&<div>
-                  <label style={LS}>Total Flats in Building: <strong>{totalFlatsInBuilding}</strong></label>
-                  <input type="range" min={4} max={2000} step={4} value={totalFlatsInBuilding} onChange={e=>setTotalFlatsInBuilding(+e.target.value)} style={{width:"100%",marginTop:6}}/>
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,marginTop:3}}>
-                    {totalFlatsInBuilding<=50?"Low density — less traffic":""}
-                    {totalFlatsInBuilding>50&&totalFlatsInBuilding<=200?"Medium density":""}
-                    {totalFlatsInBuilding>200&&totalFlatsInBuilding<=500?"High density — expect traffic":""}
-                    {totalFlatsInBuilding>500?"Very high density — significant traffic & parking pressure":""}
-                  </div>
-                </div>}
-              </div>
-              {/* Views & special features */}
-              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:4}}>
-                {[
-                  {label:"🏞️ Lake View (+5-8%)",state:hasLakeView,set:setHasLakeView},
-                  {label:"🌳 Garden/Park View (+3-5%)",state:hasGardenView,set:setHasGardenView},
-                  {label:"🌿 Landscape View (+2-4%)",state:hasParkView,set:setHasParkView},
-                  {label:"🌆 City/Skyline View (+3-6%)",state:hasCityView,set:setHasCityView},
-                  {label:"🏠 Duplex Unit (+8-12%)",state:hasDuplex,set:setHasDuplex},
-                  {label:"🛏️ Servant/Utility Room (+2-4%)",state:hasServantRoom,set:setHasServantRoom},
-                ].map(({label,state,set})=>(
-                  <button key={label} onClick={()=>set(!state)}
-                    style={{background:state?C.blue+"18":"#F8FAFB",border:"1px solid "+(state?C.blue:C.border),color:state?C.blue:C.muted,borderRadius:16,padding:"4px 11px",fontFamily:"Inter,sans-serif",fontSize:11,cursor:"pointer",fontWeight:state?600:400}}>
-                    {state?"✓ ":""}{label}
-                  </button>
-                ))}
-              </div>
-            </div>
+              </G>
 
-            {/* Maintenance */}
-            {!isPlot&&(
-              <div style={{background:C.bg,borderRadius:8,padding:"12px",display:"flex",flexDirection:"column",gap:8}}>
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark}}>🔧 Maintenance, Growth Rate & Tax</div>
-                <div style={{display:"flex",gap:8,marginBottom:4}}>
-                  <button onClick={()=>setAutoCalc(!autoCalc)}
-                    style={{flex:1,padding:"7px",fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:11,
-                      background:autoCalc?C.blue:"#F1F5F9",color:autoCalc?"#fff":C.muted,
-                      border:"none",borderRadius:7,cursor:"pointer"}}>
-                    {autoCalc?"✓ ":""}Auto-calculate based on property details
-                  </button>
-                </div>
-
-                {autoCalc ? (()=>{
-                  // Auto-calculated maintenance based on amenity richness, building scale, age
-                  const amenCount = amenityMode==="count" ? amenityCount : selAmenities.length;
-                  const amenFactor = amenCount<=10?1.0:amenCount<=25?1.4:amenCount<=45?1.9:2.5;
-                  const scaleFactor = totalFlatsInBuilding<=50?1.15:totalFlatsInBuilding<=200?1.0:totalFlatsInBuilding<=500?0.88:0.78;
-                  const ageFactorMaint = age==="New (0-2 yrs)"?0.85:age==="Recent (3-5 yrs)"?1.0:age==="Mid (6-10 yrs)"?1.2:age==="Old (11-20 yrs)"?1.45:1.7;
-                  const baseMaintPerSqft = 2.2; // ₹/sqft/month baseline
-                  const autoMaintPerSqft = baseMaintPerSqft * amenFactor * scaleFactor * ageFactorMaint;
-                  const autoMonthlyMaint = Math.round(autoMaintPerSqft * area);
-                  const autoAnnualMaint = autoMonthlyMaint * 12;
-
-                  // Auto CAGR based on city tier + growth catalysts (developer tier, approval quality)
-                  const cityTierCagr = getCityTierRate(city,"apartment")>=8000?9.5:getCityTierRate(city,"apartment")>=4500?11:getCityTierRate(city,"apartment")>=3000?13:14.5;
-                  const devBoost = (DEVELOPER_TIERS[developer]||1.0) >= 1.15 ? 1.5 : 0;
-                  const approvalPenalty = (APPROVAL_IMPACT[approvalType]||1.0) < 0.85 ? -2 : 0;
-                  const autoCagr = Math.round((cityTierCagr + devBoost + approvalPenalty)*10)/10;
-
-                  // Auto property tax based on state
-                  const taxRatePct = getPropertyTaxRate(approvalState||detectStateFromCity(city));
-                  const estimatedPropertyValue = calcEstimate().total;
-                  const autoAnnualTax = Math.round(estimatedPropertyValue * taxRatePct / 100);
-
-                  return(
-                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                      <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:8}}>
-                        <div style={{background:"#fff",borderRadius:8,padding:"9px 8px",textAlign:"center",border:"1px solid "+C.border}}>
-                          <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>Est. Monthly Maintenance</div>
-                          <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.dark}}>₹{autoMonthlyMaint.toLocaleString()}</div>
-                          <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>₹{autoMaintPerSqft.toFixed(1)}/sqft</div>
-                        </div>
-                        <div style={{background:"#fff",borderRadius:8,padding:"9px 8px",textAlign:"center",border:"1px solid "+C.border}}>
-                          <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>Est. Annual Growth</div>
-                          <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.green}}>{autoCagr}%</div>
-                          <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>CAGR estimate</div>
-                        </div>
-                        <div style={{background:"#fff",borderRadius:8,padding:"9px 8px",textAlign:"center",border:"1px solid "+C.border}}>
-                          <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>Est. Property Tax/yr</div>
-                          <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.dark}}>₹{autoAnnualTax.toLocaleString()}</div>
-                          <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>{taxRatePct}% of value</div>
-                        </div>
-                      </div>
-                      <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,fontStyle:"italic"}}>
-                        Based on {amenCount} amenities, {totalFlatsInBuilding} flats in building, {age}, and {approvalState||detectStateFromCity(city)} tax rates. These feed into the UDS & Loan calculator automatically.
-                      </div>
+              {/* Group 2: Unit Details */}
+              {!isPlot&&(
+                <G id="unit" icon="🏠" title="Unit Details">
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                    <div><label style={LS}>BHK / Config</label>
+                      <select value={bhk} onChange={e=>setBhk(e.target.value)} style={IS}>
+                        {(BHK_OPTIONS||["Studio","1 BHK","2 BHK","3 BHK","4 BHK","5+ BHK"]).map(k=><option key={k}>{k}</option>)}
+                      </select>
                     </div>
-                  );
-                })() : (
-                  <>
+                    <div><label style={LS}>Area Type</label>
+                      <select value={areaType} onChange={e=>setAreaType(e.target.value)} style={IS}>
+                        {(AREA_TYPES||["Carpet Area","Built-Up Area","Super Built-Up Area"]).map(k=><option key={k}>{k}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label style={LS}>Area (sqft) — <strong style={{color:C.dark}}>{(+area||0).toLocaleString()}</strong></label>
+                    <input type="range" min={300} max={8000} step={50} value={area||1200} onChange={e=>setArea(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                    <div style={{display:"flex",justifyContent:"space-between",fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,marginTop:2}}>
+                      <span>300</span><span>8,000</span>
+                    </div>
+                  </div>
+                </G>
+              )}
+
+              {isPlot&&(
+                <G id="unit" icon="🏗️" title="Plot Details">
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                    <div>
+                      <label style={LS}>Plot Area — <strong style={{color:C.dark}}>{(+plotArea||0).toLocaleString()}</strong></label>
+                      <input type="range" min={100} max={20000} step={100} value={plotArea||1200} onChange={e=>setPlotArea(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                    </div>
+                    <div><label style={LS}>Unit</label>
+                      <select value={plotAreaUnit} onChange={e=>setPlotAreaUnit(e.target.value)} style={IS}>
+                        {["sqft","sqyd","guntha","acre","cents"].map(k=><option key={k}>{k}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                </G>
+              )}
+
+              {/* Group 3: Building */}
+              {!isPlot&&(
+                <G id="building" icon="🏗️" title="Building">
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                    <div><label style={LS}>Building Type</label>
+                      <select value={buildingType} onChange={e=>setBuildingType(e.target.value)} style={IS}>
+                        {(BUILDING_TYPES||["High Rise (>10 floors)","Mid Rise (5-10 floors)","Low Rise (<5 floors)"]).map(k=><option key={k}>{k}</option>)}
+                      </select>
+                    </div>
+                    <div><label style={LS}>Common Walls</label>
+                      <select value={commonWalls} onChange={e=>setCommonWalls(e.target.value)} style={IS}>
+                        {(COMMON_WALLS||["No Common Walls (Corner/End Unit)","1 Common Wall","2 Common Walls (Middle Unit)","3 Common Walls"]).map(k=><option key={k}>{k}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  {!isVilla&&(
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                       <div>
-                        <label style={LS}>Monthly Maintenance</label>
-                        <input value={maintenanceCharge} onChange={e=>setMaintenanceCharge(e.target.value)} type="number" style={IS} placeholder="e.g. 3500"/>
+                        <label style={LS}>Total Floors — <strong style={{color:C.dark}}>{totalFloors}</strong></label>
+                        <input type="range" min={1} max={60} value={totalFloors}
+                          onChange={e=>{setTotalFloors(+e.target.value);if(selectedFloor>+e.target.value)setSelectedFloor(+e.target.value);}}
+                          style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
                       </div>
                       <div>
-                        <label style={LS}>Type</label>
+                        <label style={LS}>Your Floor — <strong style={{color:C.dark}}>{selectedFloor===0?"G":selectedFloor}</strong></label>
+                        <input type="range" min={0} max={totalFloors} value={selectedFloor}
+                          onChange={e=>setSelectedFloor(+e.target.value)}
+                          style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                      </div>
+                    </div>
+                  )}
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                    <div>
+                      <label style={LS}>Blocks — <strong style={{color:C.dark}}>{totalBlocks}</strong></label>
+                      <input type="range" min={1} max={30} value={totalBlocks} onChange={e=>setTotalBlocks(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                    </div>
+                    <div>
+                      <label style={LS}>Car Parking — <strong style={{color:C.dark}}>{carParking}</strong></label>
+                      <input type="range" min={0} max={4} value={carParking} onChange={e=>setCarParking(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                    </div>
+                  </div>
+                  {!isVilla&&(
+                    <div>
+                      <label style={LS}>Total Flats — <strong style={{color:C.dark}}>{totalFlatsInBuilding}</strong></label>
+                      <input type="range" min={4} max={2000} step={4} value={totalFlatsInBuilding} onChange={e=>setTotalFlatsInBuilding(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                      <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,marginTop:2}}>
+                        {totalFlatsInBuilding<=50?"Low density":totalFlatsInBuilding<=200?"Medium density":totalFlatsInBuilding<=500?"High density":"Very high density"}
+                      </div>
+                    </div>
+                  )}
+                </G>
+              )}
+
+              {/* Group 4: Developer & Construction */}
+              <G id="developer" icon="👷" title="Developer & Construction">
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <div><label style={LS}>Developer</label>
+                    <select value={developer} onChange={e=>setDeveloper(e.target.value)} style={IS}>
+                      {Object.keys(DEVELOPER_TIERS||{}).map(k=><option key={k}>{k}</option>)}
+                    </select>
+                  </div>
+                  <div><label style={LS}>Custom Premium (%)</label>
+                    <input value={customDevPremium} onChange={e=>setCustomDevPremium(e.target.value)} style={IS} placeholder="e.g. 25"/>
+                  </div>
+                  {!isPlot&&(
+                    <div><label style={LS}>Construction Status</label>
+                      <select value={constructionStatus} onChange={e=>setConstructionStatus(e.target.value)} style={IS}>
+                        {(CONSTRUCTION_STATUS||["Ready to Move / Possession","Under Construction (Near Completion)","Under Construction (Early Stage)","Pre-Launch / Booking Open"]).map(k=><option key={k}>{k}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  {constructionStatus!=="Ready to Move / Possession"&&(
+                    <div><label style={LS}>Target Completion</label>
+                      <select value={completionYear} onChange={e=>setCompletionYear(+e.target.value)} style={IS}>
+                        {[2025,2026,2027,2028,2029,2030].map(y=><option key={y}>{y}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  {!isPlot&&(
+                    <div><label style={LS}>Water Supply</label>
+                      <select value={waterQuality} onChange={e=>setWaterQuality(e.target.value)} style={IS}>
+                        {(WATER_QUALITY||["Corporation Supply","24×7 Treated Water","Treated / RO Water","Mixed (Borewell + Corp)","Borewell (Hard Water)"]).map(k=><option key={k}>{k}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  {!isPlot&&(
+                    <div><label style={LS}>Building Age</label>
+                      <select value={age} onChange={e=>setAge(e.target.value)} style={IS}>
+                        {["New (0-2 yrs)","Recent (3-5 yrs)","Mid (6-10 yrs)","Old (11-20 yrs)","Very Old (20+ yrs)"].map(k=><option key={k}>{k}</option>)}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              </G>
+
+              {/* Group 5: Legal, Quality, Community */}
+              <G id="legal" icon="⚖️" title="Legal & Approval">
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <div><label style={LS}>State</label>
+                    <select value={approvalState||detectStateFromCity(city)} onChange={e=>setApprovalState(e.target.value)} style={IS}>
+                      {Object.keys(APPROVAL_TYPES||{"Karnataka":[],"Maharashtra":[],"Other / Generic":[]}).map(k=><option key={k}>{k}</option>)}
+                    </select>
+                  </div>
+                  <div><label style={LS}>Approval / Khata</label>
+                    <select value={approvalType} onChange={e=>setApprovalType(e.target.value)} style={IS}>
+                      {((APPROVAL_TYPES||{})[approvalState||detectStateFromCity(city)]||(APPROVAL_TYPES||{})["Other / Generic"]||["RERA Registered"]).map(k=><option key={k}>{k}</option>)}
+                    </select>
+                  </div>
+                  <div><label style={LS}>Legal Status</label>
+                    <select value={legalStatus} onChange={e=>setLegalStatus(e.target.value)} style={IS}>
+                      {(LEGAL_STATUSES||["Clear Title","Title with Minor Encumbrance","Title Under Dispute","Leasehold"]).map(k=><option key={k}>{k}</option>)}
+                    </select>
+                  </div>
+                  <div><label style={LS}>Community Type</label>
+                    <select value={communityType} onChange={e=>setCommunityType(e.target.value)} style={IS}>
+                      {(COMMUNITY_TYPES||["Gated Community","Housing Society","Standalone Building","Township"]).map(k=><option key={k}>{k}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </G>
+
+              {/* Group 6: Quality */}
+              <G id="quality" icon="🏆" title="Construction Quality">
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <div><label style={LS}>Build Quality</label>
+                    <select value={constructionQuality} onChange={e=>setConstructionQuality(e.target.value)} style={IS}>
+                      {(CONSTRUCTION_QUALITIES||["Premium (German/Italian fittings)","Standard (RCC, ISI materials)","Economy (Basic materials)","Luxury (Custom grade)"]).map(k=><option key={k}>{k}</option>)}
+                    </select>
+                  </div>
+                  <div><label style={LS}>Ventilation</label>
+                    <select value={ventilation} onChange={e=>setVentilation(e.target.value)} style={IS}>
+                      {(VENTILATION_OPTIONS||["Good (Cross ventilation)","Average (Single side)","Poor (Enclosed)"]).map(k=><option key={k}>{k}</option>)}
+                    </select>
+                  </div>
+                  {!isPlot&&(
+                    <div>
+                      <label style={LS}>Balconies — <strong style={{color:C.dark}}>{noBalconies}</strong></label>
+                      <input type="range" min={0} max={4} value={noBalconies} onChange={e=>setNoBalconies(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                    </div>
+                  )}
+                </div>
+              </G>
+
+              {/* Group 7: Views & Special */}
+              <G id="views" icon="🌅" title="Views & Special Features">
+                <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                  {[
+                    {l:"🏞️ Lake View",     s:hasLakeView,    f:setHasLakeView,   p:"+5-8%"},
+                    {l:"🌳 Garden View",   s:hasGardenView,  f:setHasGardenView, p:"+3-5%"},
+                    {l:"🌿 Park View",     s:hasParkView,    f:setHasParkView,   p:"+2-4%"},
+                    {l:"🌆 City View",     s:hasCityView,    f:setHasCityView,   p:"+3-6%"},
+                    {l:"🏠 Duplex",        s:hasDuplex,      f:setHasDuplex,     p:"+8-12%"},
+                    {l:"🛏️ Servant Room", s:hasServantRoom, f:setHasServantRoom,p:"+2-4%"},
+                  ].map(({l,s,f,p})=>(
+                    <button key={l} onClick={()=>f(!s)}
+                      style={{background:s?C.blue+"18":"#F8FAFB",border:`1px solid ${s?C.blue:C.border}`,
+                        color:s?C.blue:C.muted,borderRadius:16,padding:"5px 10px",
+                        fontFamily:"Inter,sans-serif",fontSize:10,cursor:"pointer",fontWeight:s?700:400,
+                        display:"flex",alignItems:"center",gap:4}}>
+                      {s&&"✓ "}{l}
+                      <span style={{fontSize:9,color:s?C.blue:"#94A3B8"}}>{p}</span>
+                    </button>
+                  ))}
+                </div>
+              </G>
+
+              {/* Group 8: Maintenance */}
+              {!isPlot&&(
+                <G id="maintenance" icon="🔧" title="Maintenance & Costs">
+                  <button onClick={()=>setAutoCalc(!autoCalc)}
+                    style={{padding:"7px 10px",fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:11,
+                      background:autoCalc?C.blue:"#F1F5F9",color:autoCalc?"#fff":C.muted,
+                      border:"none",borderRadius:7,cursor:"pointer",textAlign:"left",width:"100%"}}>
+                    {autoCalc?"✓ Auto-calculate maintenance":"Manual entry"}
+                  </button>
+                  {autoCalc?(()=>{
+                    const m=autoMaintCalc();
+                    return(
+                      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6}}>
+                        {[["Monthly",`₹${m.monthly.toLocaleString()}`,C.dark],
+                          ["Growth",m.cagr+"%/yr",C.green],
+                          ["Tax/yr","₹"+fmtL(m.tax),C.dark]].map(([l,v,col])=>(
+                          <div key={l} style={{background:"#F8FAFB",borderRadius:7,padding:"8px",textAlign:"center",border:`1px solid ${C.border}`}}>
+                            <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>{l}</div>
+                            <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:col}}>{v}</div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })():(
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                      <div><label style={LS}>Monthly Maintenance</label>
+                        <input value={maintenanceCharge} onChange={e=>setMaintenanceCharge(e.target.value)} type="number" style={IS} placeholder="₹3,500"/>
+                      </div>
+                      <div><label style={LS}>Type</label>
                         <select value={maintenanceType} onChange={e=>setMaintenanceType(e.target.value)} style={IS}>
-                          {["per sqft/month","flat monthly charge","quarterly","annual"].map(k=><option key={k}>{k}</option>)}
+                          {["flat monthly charge","per sqft/month","quarterly","annual"].map(k=><option key={k}>{k}</option>)}
                         </select>
                       </div>
                     </div>
-                    {maintenanceCharge&&(
-                      <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted}}>
-                        Annual: ₹{maintenanceType.includes("month")||maintenanceType==="per sqft/month"
-                          ? ((+maintenanceCharge*(maintenanceType==="per sqft/month"?area:1))*12).toLocaleString()
-                          : maintenanceType==="quarterly"?(+maintenanceCharge*4).toLocaleString()
-                          : (+maintenanceCharge).toLocaleString()} per year
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        )}
+                  )}
+                </G>
+              )}
 
-        {/* SECTION: Amenities */}
-        {activeSection==="amenities" && !isPlot && (
-          <div style={{display:"flex",flexDirection:"column",gap:10}}>
-            <div style={{display:"flex",gap:8,marginBottom:4}}>
-              <button onClick={()=>setAmenityMode("select")} style={{flex:1,padding:"8px",fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,background:amenityMode==="select"?C.blue:"#F1F5F9",color:amenityMode==="select"?"#fff":C.muted,border:"none",borderRadius:8,cursor:"pointer"}}>
-                Select Amenities Individually
-              </button>
-              <button onClick={()=>setAmenityMode("count")} style={{flex:1,padding:"8px",fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,background:amenityMode==="count"?C.blue:"#F1F5F9",color:amenityMode==="count"?"#fff":C.muted,border:"none",borderRadius:8,cursor:"pointer"}}>
-                Just Enter Count
-              </button>
+              <LiveEstimate/>
             </div>
+          )}
 
-            {amenityMode==="count" ? (
-              <div>
-                <label style={LS}>Total Number of Amenities: <strong>{amenityCount}</strong></label>
-                <input type="range" min={0} max={100} value={amenityCount} onChange={e=>setAmenityCount(+e.target.value)} style={{width:"100%",marginTop:6}}/>
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,marginTop:6}}>
-                  Amenity Score: {amenityScore}/100 · Estimated premium: ~₹{Math.round(getAmenityPremium()).toLocaleString()}/sqft
-                </div>
-              </div>
-            ) : (
-              <>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.muted}}>
-                    {selAmenities.length} selected · Score: <strong style={{color:scoreColor(amenityScore)}}>{amenityScore}/100</strong> · Premium: ~₹{Math.round(getAmenityPremium()).toLocaleString()}/sqft
-                  </div>
-                  <button onClick={()=>setSelAmenities([])} style={{background:"none",border:"none",color:C.red,fontFamily:"Inter,sans-serif",fontSize:11,cursor:"pointer"}}>Clear all</button>
-                </div>
-                {Object.entries(AMENITY_CATEGORIES).map(([cat, data]) => (
-                  <div key={cat} style={{borderRadius:8,border:`1px solid ${C.border}`,overflow:"hidden"}}>
-                    <div onClick={()=>setExpandedCat(expandedCat===cat?null:cat)}
-                      style={{padding:"10px 12px",background:C.bg,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                      <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark}}>{cat}</div>
-                      <div style={{display:"flex",alignItems:"center",gap:8}}>
-                        <span style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted}}>
-                          {data.items.filter(a=>selAmenities.includes(a.id)).length}/{data.items.length}
-                        </span>
-                        <span style={{color:C.muted,fontSize:13}}>{expandedCat===cat?"▲":"▼"}</span>
-                      </div>
-                    </div>
-                    {expandedCat===cat && (
-                      <div style={{padding:"10px 12px",display:"flex",flexWrap:"wrap",gap:6}}>
-                        {data.items.map(a => {
-                          const on = selAmenities.includes(a.id);
-                          return (
-                            <button key={a.id} onClick={()=>toggleAmenity(a.id)}
-                              style={{background:on?(a.essential?"#F0FDF4":C.blue+"18"):"#F8FAFB",
-                                border:`1px solid ${on?(a.essential?C.green:C.blue):C.border}`,
-                                color:on?(a.essential?C.green:C.blue):C.muted,
-                                borderRadius:16,padding:"3px 10px",fontFamily:"Inter,sans-serif",fontSize:11,cursor:"pointer",fontWeight:on?600:400}}>
-                              {a.essential&&"⭐ "}{on?"✓ ":""}{a.label} {a.premium>0&&<span style={{fontSize:9,opacity:0.7}}>+₹{a.premium}</span>}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
+          {/* ════════════════════════════════════════
+              SECTION: AMENITIES
+          ════════════════════════════════════════ */}
+          {activeSection==="amenities"&&!isPlot&&(
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <div style={{display:"flex",gap:8,marginBottom:4}}>
+                {[["select","Select Individually"],["count","Just Enter Count"]].map(([m,l])=>(
+                  <button key={m} onClick={()=>setAmenityMode(m)}
+                    style={{flex:1,padding:"8px",fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,
+                      background:amenityMode===m?C.blue:"#F1F5F9",color:amenityMode===m?"#fff":C.muted,
+                      border:"none",borderRadius:8,cursor:"pointer"}}>
+                    {l}
+                  </button>
                 ))}
-              </>
-            )}
-          </div>
-        )}
-
-        {/* SECTION: Civic & Infra */}
-        {activeSection==="civic" && (
-          <div style={{display:"flex",flexDirection:"column",gap:12}}>
-            {/* Civic Score */}
-            <div style={{borderRadius:8,border:`1px solid ${C.border}`,padding:"12px"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark}}>🏛️ Civic Conditions</div>
-                <div style={{background:scoreColor(civicScore),color:"#fff",borderRadius:6,padding:"2px 10px",fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12}}>Score {civicScore}/100</div>
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              {amenityMode==="count"?(
                 <div>
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.green,fontWeight:600,marginBottom:6}}>✅ Positive Factors</div>
-                  {CIVIC_FACTORS.filter(f=>f.positive).map(f=>{
-                    const on=civicGood.includes(f.id);
-                    return <button key={f.id} onClick={()=>toggleCivicGood(f.id)}
-                      style={{display:"block",width:"100%",textAlign:"left",marginBottom:4,background:on?"#F0FDF4":"#F8FAFB",border:`1px solid ${on?C.green:C.border}`,borderRadius:6,padding:"5px 8px",fontFamily:"Inter,sans-serif",fontSize:11,color:on?C.green:C.muted,cursor:"pointer",fontWeight:on?600:400}}>
-                      {on?"✓ ":""}{f.label}
+                  <label style={LS}>Total Amenities: <strong style={{color:C.dark}}>{amenityCount}</strong></label>
+                  <input type="range" min={0} max={100} value={amenityCount} onChange={e=>setAmenityCount(+e.target.value)} style={{width:"100%",marginTop:6,accentColor:C.blue}}/>
+                  <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,marginTop:6}}>
+                    Score: {amenityScore}/100 · Premium: ~₹{Math.round(getAmenityPremium()).toLocaleString()}/sqft
+                  </div>
+                </div>
+              ):(
+                <>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.muted}}>
+                      {selAmenities.length} selected · Score: <strong style={{color:scoreColor(amenityScore)}}>{amenityScore}/100</strong>
+                    </div>
+                    <button onClick={()=>setSelAmenities([])} style={{background:"none",border:"none",color:C.red,fontFamily:"Inter,sans-serif",fontSize:11,cursor:"pointer"}}>Clear</button>
+                  </div>
+                  {Object.entries(AMENITY_CATEGORIES||{}).map(([cat,data])=>(
+                    <div key={cat} style={{borderRadius:8,border:`1px solid ${C.border}`,overflow:"hidden"}}>
+                      <div onClick={()=>setExpandedCat(expandedCat===cat?null:cat)}
+                        style={{padding:"10px 12px",background:C.bg,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark}}>{cat}</div>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <span style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted}}>
+                            {data.items.filter(a=>selAmenities.includes(a.id)).length}/{data.items.length}
+                            {data.items.filter(a=>selAmenities.includes(a.id)).length>0&&
+                              ` · +₹${Math.round(data.items.filter(a=>selAmenities.includes(a.id)).reduce((s,a)=>s+a.premium*data.weight,0)*area/1e5*10)/10}L`}
+                          </span>
+                          <span style={{color:C.muted,fontSize:13}}>{expandedCat===cat?"▲":"▼"}</span>
+                        </div>
+                      </div>
+                      {expandedCat===cat&&(
+                        <div style={{padding:"10px 12px",display:"flex",flexDirection:"column",gap:5}}>
+                          {data.items.map(a=>{
+                            const on=selAmenities.includes(a.id);
+                            const perSqft=Math.round(a.premium*data.weight);
+                            const rupees=perSqft*(+area||1200);
+                            return(
+                              <div key={a.id} onClick={()=>toggleAmenity(a.id)}
+                                style={{display:"flex",alignItems:"center",gap:8,padding:"7px 9px",borderRadius:8,cursor:"pointer",
+                                  border:`1.5px solid ${on?"#2563EB":C.border}`,background:on?"#EFF6FF":"#fff"}}>
+                                <div style={{width:18,height:18,borderRadius:5,flexShrink:0,
+                                  border:`1.5px solid ${on?"#2563EB":C.border}`,background:on?"#2563EB":"#fff",
+                                  display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:10}}>{on?"✓":""}</div>
+                                <div style={{flex:1,fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,color:on?"#1D4ED8":C.dark}}>
+                                  {a.essential&&"⭐ "}{a.label}
+                                </div>
+                                <div style={{flexShrink:0,textAlign:"right"}}>
+                                  <div style={{fontFamily:"Inter,sans-serif",fontSize:9,fontWeight:700,color:on?"#2563EB":"#94A3B8"}}>₹{perSqft}/sqft</div>
+                                  <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:on?"#15803D":"#94A3B8"}}>{on?"+"+fmt(rupees):"if selected"}</div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </>
+              )}
+              <LiveEstimate/>
+            </div>
+          )}
+
+          {/* ════════════════════════════════════════
+              SECTION: CIVIC & INFRA
+          ════════════════════════════════════════ */}
+          {activeSection==="civic"&&(
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <div style={{borderRadius:8,border:`1px solid ${C.border}`,overflow:"hidden"}}>
+                <div style={{padding:"10px 12px",background:C.bg,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark}}>🏛️ Civic Conditions</div>
+                  <div style={{background:scoreColor(civicScore),color:"#fff",borderRadius:6,padding:"2px 10px",
+                    fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12}}>Score {civicScore}/100</div>
+                </div>
+                <div style={{padding:"10px 12px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <div>
+                    <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.green,fontWeight:600,marginBottom:6}}>✅ Positives</div>
+                    {(CIVIC_FACTORS||[]).filter(f=>f.positive).map(f=>{
+                      const on=civicGood.includes(f.id);
+                      return <button key={f.id} onClick={()=>toggleCivicGood(f.id)}
+                        style={{display:"block",width:"100%",textAlign:"left",marginBottom:4,
+                          background:on?"#F0FDF4":"#F8FAFB",border:`1px solid ${on?C.green:C.border}`,
+                          borderRadius:6,padding:"5px 8px",fontFamily:"Inter,sans-serif",fontSize:10,
+                          color:on?C.green:C.muted,cursor:"pointer",fontWeight:on?600:400}}>
+                        {on?"✓ ":""}{f.label}
+                      </button>;
+                    })}
+                  </div>
+                  <div>
+                    <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.red,fontWeight:600,marginBottom:6}}>⚠️ Issues</div>
+                    {(CIVIC_FACTORS||[]).filter(f=>!f.positive).map(f=>{
+                      const on=civicBad.includes(f.id);
+                      return <button key={f.id} onClick={()=>toggleCivicBad(f.id)}
+                        style={{display:"block",width:"100%",textAlign:"left",marginBottom:4,
+                          background:on?"#FFF5F5":"#F8FAFB",border:`1px solid ${on?C.red:C.border}`,
+                          borderRadius:6,padding:"5px 8px",fontFamily:"Inter,sans-serif",fontSize:10,
+                          color:on?C.red:C.muted,cursor:"pointer",fontWeight:on?600:400}}>
+                        {on?"✓ ":""}{f.label}
+                      </button>;
+                    })}
+                  </div>
+                </div>
+              </div>
+              <div style={{borderRadius:8,border:`1px solid ${C.border}`,padding:12}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark}}>🏙️ Nearby Facilities</div>
+                  <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.blue}}>+₹{infraPremium.toLocaleString()}/sqft</div>
+                </div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                  {(INFRA_ITEMS||[]).map(item=>{
+                    const on=selInfra.includes(item.id);
+                    return <button key={item.id} onClick={()=>toggleInfra(item.id)}
+                      style={{background:on?C.lightBlue:"#F8FAFB",border:`1px solid ${on?C.blue:C.border}`,
+                        color:on?C.blue:C.muted,borderRadius:14,padding:"4px 9px",
+                        fontFamily:"Inter,sans-serif",fontSize:10,cursor:"pointer",fontWeight:on?600:400}}>
+                      {item.icon} {on?"✓ ":""}{item.label}
                     </button>;
                   })}
                 </div>
-                <div>
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.red,fontWeight:600,marginBottom:6}}>⚠️ Issues / Problems</div>
-                  {CIVIC_FACTORS.filter(f=>!f.positive).map(f=>{
-                    const on=civicBad.includes(f.id);
-                    return <button key={f.id} onClick={()=>toggleCivicBad(f.id)}
-                      style={{display:"block",width:"100%",textAlign:"left",marginBottom:4,background:on?"#FFF5F5":"#F8FAFB",border:`1px solid ${on?C.red:C.border}`,borderRadius:6,padding:"5px 8px",fontFamily:"Inter,sans-serif",fontSize:11,color:on?C.red:C.muted,cursor:"pointer",fontWeight:on?600:400}}>
-                      {on?"✓ ":""}{f.label}
-                    </button>;
-                  })}
+              </div>
+              <LiveEstimate/>
+            </div>
+          )}
+
+          {/* ════════════════════════════════════════
+              SECTION: PRICING
+          ════════════════════════════════════════ */}
+          {activeSection==="pricing"&&(
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <div style={{background:C.lightBlue,borderRadius:8,padding:12}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                  <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted}}>Formula estimate</div>
+                  <ProvenanceBadge type="curated"/>
                 </div>
+                {locality?(()=>{const e=calcEstimate();const gst=calcGST(e.total);return(
+                  <div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:gst.amount?8:0}}>
+                      <div>
+                        <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:18,color:C.blue}}>
+                          ₹{e.rate.toLocaleString()}<span style={{fontSize:11,fontWeight:400}}>/sqft</span>
+                        </div>
+                        <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted}}>Total: ₹{fmtL(e.total)}</div>
+                      </div>
+                      <div>
+                        <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted}}>Range</div>
+                        <div style={{fontFamily:"Inter,sans-serif",fontSize:13,fontWeight:600,color:C.dark}}>₹{fmtL(e.low)} – ₹{fmtL(e.high)}</div>
+                      </div>
+                    </div>
+                    {gst.amount>0&&(
+                      <div style={{background:"#FEF9C3",borderRadius:6,padding:"6px 10px",fontFamily:"Inter,sans-serif",fontSize:11,color:"#92400E"}}>
+                        🧾 GST ({gst.rate}%): +₹{fmtL(gst.amount)} → Total with GST: ₹{fmtL(gst.total)}
+                      </div>
+                    )}
+                  </div>
+                );})():<div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.muted}}>Enter locality to see estimate</div>}
               </div>
-            </div>
-
-            {/* Infra */}
-            <div style={{borderRadius:8,border:`1px solid ${C.border}`,padding:"12px"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark}}>🏙️ Nearby Infrastructure</div>
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.blue}}>+₹{infraPremium.toLocaleString()}/sqft premium</div>
-              </div>
-              <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                {INFRA_ITEMS.map(item=>{
-                  const on=selInfra.includes(item.id);
-                  return <button key={item.id} onClick={()=>toggleInfra(item.id)}
-                    style={{background:on?C.lightBlue:"#F8FAFB",border:`1px solid ${on?C.blue:C.border}`,color:on?C.blue:C.muted,
-                      borderRadius:16,padding:"4px 10px",fontFamily:"Inter,sans-serif",fontSize:11,cursor:"pointer",fontWeight:on?600:400}}>
-                    {item.icon} {on?"✓ ":""}{item.label}
-                  </button>;
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* SECTION: Pricing */}
-        {activeSection==="pricing" && (
-          <div style={{display:"flex",flexDirection:"column",gap:10}}>
-            <div style={{background:C.lightBlue,borderRadius:8,padding:"12px"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted}}>Our formula estimate</div>
-                <ProvenanceBadge type="curated"/>
-              </div>
-              {locality ? (()=>{const e=calcEstimate();return(
+              {priceCorrections.length>0&&(
+                <div style={{background:"#F0FDF4",borderRadius:8,padding:"10px 12px",fontFamily:"Inter,sans-serif",fontSize:11,color:C.green}}>
+                  ✓ {priceCorrections.length} correction(s) applied · Factor: {normCorrFactor.toFixed(2)}x
+                </div>
+              )}
+              <div style={{borderRadius:8,border:`1px solid ${C.border}`,padding:12}}>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark,marginBottom:6}}>📊 Your Known Market Range (optional)</div>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,marginBottom:8}}>If you know local rates, enter them. AI will blend with market data.</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                  <div>
-                    <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:18,color:C.blue}}>₹{e.rate.toLocaleString()}<span style={{fontSize:11,fontWeight:400}}>/sqft</span></div>
-                    <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted}}>Total: ₹{fmtL(e.total)}</div>
-                  </div>
-                  <div>
-                    <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted}}>Range</div>
-                    <div style={{fontFamily:"Inter,sans-serif",fontSize:13,fontWeight:600,color:C.dark}}>₹{fmtL(e.low)} – ₹{fmtL(e.high)}</div>
-                  </div>
-                </div>
-              );})() : <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.muted}}>Enter locality to see estimate</div>}
-            </div>
-
-            {priceCorrections.length > 0 && (
-              <div style={{background:"#F0FDF4",borderRadius:8,padding:"10px 12px",fontFamily:"Inter,sans-serif",fontSize:11,color:C.green}}>
-                ✓ {priceCorrections.length} price correction(s) applied · Avg factor: {normCorrFactor.toFixed(2)}x
-              </div>
-            )}
-
-            <div style={{borderRadius:8,border:`1px solid ${C.border}`,padding:"12px"}}>
-              <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark,marginBottom:8}}>📊 Update Market Price Range (optional)</div>
-              <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,marginBottom:8}}>If you know the actual market price range, enter it. AI will average it with market data and apply it to future estimates.</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-                <div>
-                  <label style={LS}>Min ₹/sqft you've seen</label>
-                  <input value={userMinPrice} onChange={e=>setUserMinPrice(e.target.value)} type="number" style={IS} placeholder="e.g. 5500 ₹/sqft"/>
-                </div>
-                <div>
-                  <label style={LS}>Max ₹/sqft you've seen</label>
-                  <input value={userMaxPrice} onChange={e=>setUserMaxPrice(e.target.value)} type="number" style={IS} placeholder="e.g. 8500"/>
+                  <div><label style={LS}>Min ₹/sqft</label><input value={userMinPrice} onChange={e=>setUserMinPrice(e.target.value)} type="number" style={IS} placeholder="e.g. 5500"/></div>
+                  <div><label style={LS}>Max ₹/sqft</label><input value={userMaxPrice} onChange={e=>setUserMaxPrice(e.target.value)} type="number" style={IS} placeholder="e.g. 8500"/></div>
                 </div>
               </div>
-              {userMinPrice && userMaxPrice && (
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.blue,marginBottom:8}}>
-                  Your average: ₹{Math.round((+userMinPrice + +userMaxPrice)/2).toLocaleString()}/sqft · Will be blended with AI market data
-                </div>
-              )}
-            </div>
-
-            {/* Construction investment view */}
-            {constructionStatus !== "Ready to Move / Possession" && locality && (()=>{
-              const e=calcEstimate();
-              const postCompletion = Math.round(e.rate * (1 + appreciationOnCompletion/100));
-              return(
-                <div style={{background:"#FFFBEB",borderRadius:8,border:"1px solid #FDE68A",padding:"12px"}}>
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:"#92400E",marginBottom:8}}>📈 Investor View — Under Construction</div>
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:8}}>
-                    <div style={{textAlign:"center"}}>
-                      <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted}}>Buy Now</div>
-                      <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:14,color:C.blue}}>₹{e.rate.toLocaleString()}/sqft</div>
-                      <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted}}>{(constFactor*100-100).toFixed(0)}% discount</div>
-                    </div>
-                    <div style={{textAlign:"center"}}>
-                      <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted}}>At Completion</div>
-                      <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:14,color:C.green}}>~₹{postCompletion.toLocaleString()}/sqft</div>
-                      <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted}}>+{appreciationOnCompletion}% est.</div>
-                    </div>
-                    <div style={{textAlign:"center"}}>
-                      <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted}}>Gain / {area} sqft</div>
-                      <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:14,color:C.amber}}>₹{fmtL((postCompletion - e.rate) * area)}</div>
-                      <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted}}>expected profit</div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
-        )}
-
-
-        {/* SECTION: UDS & Loan Calculator */}
-        {activeSection==="uds" && !isPlot && (
-          <div style={{display:"flex",flexDirection:"column",gap:12}}>
-            <div style={{background:"#EFF6FF",borderRadius:8,padding:"10px 12px",fontFamily:"Inter,sans-serif",fontSize:11,color:C.dark,lineHeight:1.6}}>
-              📜 <strong>Undivided Share (UDS)</strong> is your % ownership of the total land the building sits on. Even in an apartment, you legally co-own a fraction of the land — this calculator estimates that land's value growth over your loan tenure, alongside true holding costs (interest, maintenance, repairs, tax).
-            </div>
-
-            <div style={{background:C.bg,borderRadius:8,padding:"12px",display:"flex",flexDirection:"column",gap:8}}>
-              <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark}}>Land & UDS Details</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                <div>
-                  <label style={LS}>Your UDS (%)</label>
-                  <input value={udsPercent} onChange={e=>setUdsPercent(e.target.value)} type="number" style={IS} placeholder="e.g. 0.85"/>
-                </div>
-                <div>
-                  <label style={LS}>Total Land Area (sqft)</label>
-                  <input value={totalLandArea} onChange={e=>setTotalLandArea(e.target.value)} type="number" style={IS} placeholder="e.g. 43560 (1 acre)"/>
-                </div>
-              </div>
-              {udsPercent&&totalLandArea&&(
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.blue}}>
-                  Your land share: {(parseFloat(totalLandArea)*parseFloat(udsPercent)/100).toFixed(1)} sqft of the total plot
-                </div>
-              )}
-            </div>
-
-            <div style={{background:C.bg,borderRadius:8,padding:"12px",display:"flex",flexDirection:"column",gap:8}}>
-              <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark}}>Loan Details</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                <div>
-                  <label style={LS}>Loan Amount (₹)</label>
-                  <input value={loanAmount} onChange={e=>setLoanAmount(e.target.value)} type="number" style={IS} placeholder="e.g. 6000000"/>
-                </div>
-                <div>
-                  <label style={LS}>Down Payment (₹)</label>
-                  <input value={downPayment} onChange={e=>setDownPayment(e.target.value)} type="number" style={IS} placeholder="e.g. 1500000"/>
-                </div>
-                <div>
-                  <label style={LS}>Interest Rate: <strong>{loanInterestRate}%</strong></label>
-                  <input type="range" min={6} max={14} step={0.1} value={loanInterestRate} onChange={e=>setLoanInterestRate(+e.target.value)} style={{width:"100%",marginTop:6}}/>
-                </div>
-                <div>
-                  <label style={LS}>Loan Tenure: <strong>{loanTenureYears} yrs</strong></label>
-                  <input type="range" min={5} max={30} value={loanTenureYears} onChange={e=>setLoanTenureYears(+e.target.value)} style={{width:"100%",marginTop:6}}/>
-                </div>
-              </div>
-            </div>
-
-            <div style={{background:C.bg,borderRadius:8,padding:"12px",display:"flex",flexDirection:"column",gap:8}}>
-              <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark}}>Annual Holding Costs</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                <div>
-                  <label style={LS}>Maintenance (₹/year)</label>
-                  <input value={annualMaintenance} onChange={e=>setAnnualMaintenance(e.target.value)} type="number" style={IS} placeholder="e.g. 42000"/>
-                </div>
-                <div>
-                  <label style={LS}>Repairs/Upkeep (₹/year avg)</label>
-                  <input value={annualRepairs} onChange={e=>setAnnualRepairs(e.target.value)} type="number" style={IS} placeholder="e.g. 15000"/>
-                </div>
-                <div>
-                  <label style={LS}>Property Tax (₹/year)</label>
-                  <input value={propertyTaxAnnual} onChange={e=>setPropertyTaxAnnual(e.target.value)} type="number" style={IS} placeholder="e.g. 8000"/>
-                </div>
-                <div>
-                  <label style={LS}>Land Appreciation: <strong>{landAppreciationRate}%/yr</strong></label>
-                  <input type="range" min={3} max={20} value={landAppreciationRate} onChange={e=>setLandAppreciationRate(+e.target.value)} style={{width:"100%",marginTop:6}}/>
-                </div>
-              </div>
-            </div>
-
-            {/* CALCULATION RESULTS */}
-            {udsPercent && totalLandArea && loanAmount && (()=>{
-              const P = parseFloat(loanAmount);
-              const r = loanInterestRate / 12 / 100;
-              const n = loanTenureYears * 12;
-              const emi = P * r * Math.pow(1+r, n) / (Math.pow(1+r, n) - 1);
-              const totalPaid = emi * n;
-              const totalInterest = totalPaid - P;
-              const dp = parseFloat(downPayment) || 0;
-              const totalCostOfHome = totalPaid + dp;
-
-              const maintTotal = (parseFloat(annualMaintenance) || 0) * loanTenureYears;
-              const repairsTotal = (parseFloat(annualRepairs) || 0) * loanTenureYears;
-              const taxTotal = (parseFloat(propertyTaxAnnual) || 0) * loanTenureYears;
-              const totalHoldingCosts = maintTotal + repairsTotal + taxTotal;
-
-              const totalSpent = totalCostOfHome + totalHoldingCosts;
-
-              // UDS land value calculation
-              const myLandSqft = parseFloat(totalLandArea) * parseFloat(udsPercent) / 100;
-              const currentRate = calcEstimate().rate; // current per-sqft from formula
-              const currentLandValue = myLandSqft * currentRate;
-              const futureLandValue = currentLandValue * Math.pow(1 + landAppreciationRate/100, loanTenureYears);
-              const landValueGain = futureLandValue - currentLandValue;
-
-              const netPosition = futureLandValue - totalSpent;
-
-              return (
-                <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                  {/* EMI summary */}
-                  <div style={{background:C.navy,borderRadius:10,padding:"16px 18px"}}>
-                    <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#94A3B8",marginBottom:10,textTransform:"uppercase",letterSpacing:0.5}}>Loan Summary</div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                      <div>
-                        <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#94A3B8"}}>Monthly EMI</div>
-                        <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:18,color:"#F8FAFB"}}>₹{Math.round(emi).toLocaleString()}</div>
-                      </div>
-                      <div>
-                        <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#94A3B8"}}>Total Interest Paid</div>
-                        <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:18,color:"#FCA5A5"}}>₹{fmtL(totalInterest)}</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Total spend breakdown */}
-                  <div style={{background:"#fff",borderRadius:10,border:"1px solid "+C.border,padding:"14px"}}>
-                    <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.dark,marginBottom:10}}>💸 Total Spend Over {loanTenureYears} Years</div>
-                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      {[
-                        ["Down Payment", dp],
-                        ["Principal Repaid", P],
-                        ["Interest Paid", totalInterest],
-                        ["Maintenance (cumulative)", maintTotal],
-                        ["Repairs/Upkeep (cumulative)", repairsTotal],
-                        ["Property Tax (cumulative)", taxTotal],
-                      ].map(([label, val]) => (
-                        <div key={label} style={{display:"flex",justifyContent:"space-between",fontFamily:"Inter,sans-serif",fontSize:12}}>
-                          <span style={{color:C.muted}}>{label}</span>
-                          <span style={{color:C.dark,fontWeight:600}}>₹{fmtL(val)}</span>
+              {constructionStatus!=="Ready to Move / Possession"&&locality&&(()=>{
+                const e=calcEstimate();
+                const postCompletion=Math.round(e.rate*(1+(appreciationOnCompletion||0)/100));
+                const gst=calcGST(e.total);
+                return(
+                  <div style={{background:"#FFFBEB",borderRadius:8,border:"1px solid #FDE68A",padding:12}}>
+                    <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:"#92400E",marginBottom:8}}>📈 Investor View — Under Construction</div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:8}}>
+                      {[["Book Now",`₹${e.rate.toLocaleString()}/sqft`,`${((constFactor||1)*100-100).toFixed(0)}% disc`],
+                        ["At Completion",`~₹${postCompletion.toLocaleString()}/sqft`,`+${appreciationOnCompletion||0}%`],
+                        ["Unit Gain",`₹${fmtL((postCompletion-e.rate)*(isPlot?plotArea:(+area||1200)))}`,`expected`]
+                      ].map(([l,v,s])=>(
+                        <div key={l} style={{textAlign:"center",background:"rgba(255,255,255,.6)",borderRadius:7,padding:"8px 4px"}}>
+                          <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:"#92400E"}}>{l}</div>
+                          <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:C.dark}}>{v}</div>
+                          <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:"#92400E"}}>{s}</div>
                         </div>
                       ))}
-                      <div style={{borderTop:"1px solid "+C.border,marginTop:4,paddingTop:8,display:"flex",justifyContent:"space-between"}}>
+                    </div>
+                    <div style={{background:"#FEF9C3",borderRadius:6,padding:"6px 10px",fontFamily:"Inter,sans-serif",fontSize:11,color:"#92400E"}}>
+                      🧾 {gst.note}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* ════════════════════════════════════════
+              SECTION: UDS & LOAN
+          ════════════════════════════════════════ */}
+          {activeSection==="uds"&&!isPlot&&(
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <div style={{background:"#EFF6FF",borderRadius:8,padding:"10px 12px",fontFamily:"Inter,sans-serif",fontSize:11,color:C.dark,lineHeight:1.6}}>
+                📜 <strong>UDS</strong> = your % land ownership. Even in an apartment you co-own a fraction of the land — this shows its future value vs total holding costs.
+              </div>
+
+              <G id="uds_land" icon="🌍" title="Land & UDS">
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <div><label style={LS}>Your UDS (%)</label>
+                    <input value={udsPercent} onChange={e=>setUdsPercent(e.target.value)} type="number" style={IS} placeholder="e.g. 0.85"/>
+                  </div>
+                  <div><label style={LS}>Total Land Area (sqft)</label>
+                    <input value={totalLandArea} onChange={e=>setTotalLandArea(e.target.value)} type="number" style={IS} placeholder="e.g. 43560"/>
+                  </div>
+                </div>
+                {udsPercent&&totalLandArea&&(
+                  <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.blue,fontWeight:600}}>
+                    Your land share: {(parseFloat(totalLandArea)*parseFloat(udsPercent)/100).toFixed(1)} sqft
+                  </div>
+                )}
+              </G>
+
+              <G id="uds_loan" icon="🏦" title="Loan Details">
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <div><label style={LS}>Loan Amount (₹)</label>
+                    <input value={loanAmount} onChange={e=>setLoanAmount(e.target.value)} type="number" style={IS} placeholder="e.g. 60,00,000"/>
+                  </div>
+                  <div><label style={LS}>Down Payment (₹)</label>
+                    <input value={downPayment} onChange={e=>setDownPayment(e.target.value)} type="number" style={IS} placeholder="e.g. 15,00,000"/>
+                  </div>
+                </div>
+                <div>
+                  <label style={LS}>Interest Rate — <strong style={{color:C.dark}}>{loanInterestRate}%</strong></label>
+                  <input type="range" min={6} max={14} step={0.1} value={loanInterestRate} onChange={e=>setLoanInterestRate(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                  <div style={{display:"flex",justifyContent:"space-between",fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,marginTop:2}}><span>6%</span><span>14%</span></div>
+                </div>
+                <div>
+                  <label style={LS}>Tenure — <strong style={{color:C.dark}}>{loanTenureYears} yrs</strong></label>
+                  <input type="range" min={5} max={30} value={loanTenureYears} onChange={e=>setLoanTenureYears(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                </div>
+              </G>
+
+              <G id="uds_costs" icon="💸" title="Annual Holding Costs">
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <div><label style={LS}>Maintenance (₹/yr)</label>
+                    <input value={annualMaintenance} onChange={e=>setAnnualMaintenance(e.target.value)} type="number" style={IS} placeholder="e.g. 42,000"/>
+                  </div>
+                  <div><label style={LS}>Repairs (₹/yr)</label>
+                    <input value={annualRepairs} onChange={e=>setAnnualRepairs(e.target.value)} type="number" style={IS} placeholder="e.g. 15,000"/>
+                  </div>
+                  <div><label style={LS}>Property Tax (₹/yr)</label>
+                    <input value={propertyTaxAnnual} onChange={e=>setPropertyTaxAnnual(e.target.value)} type="number" style={IS} placeholder="e.g. 8,000"/>
+                  </div>
+                  <div>
+                    <label style={LS}>Land Appreciation — <strong style={{color:C.dark}}>{landAppreciationRate}%/yr</strong></label>
+                    <input type="range" min={3} max={20} value={landAppreciationRate} onChange={e=>setLandAppreciationRate(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                  </div>
+                </div>
+              </G>
+
+              {/* UDS Results */}
+              {udsPercent&&totalLandArea&&loanAmount&&(()=>{
+                const P=parseFloat(loanAmount);
+                const r=loanInterestRate/12/100;
+                const n=loanTenureYears*12;
+                const emi=P*r*Math.pow(1+r,n)/(Math.pow(1+r,n)-1);
+                const totalPaid=emi*n;
+                const totalInterest=totalPaid-P;
+                const dp=parseFloat(downPayment)||0;
+                const maintTotal=(parseFloat(annualMaintenance)||0)*loanTenureYears;
+                const repairsTotal=(parseFloat(annualRepairs)||0)*loanTenureYears;
+                const taxTotal=(parseFloat(propertyTaxAnnual)||0)*loanTenureYears;
+                const totalSpent=totalPaid+dp+maintTotal+repairsTotal+taxTotal;
+                const myLandSqft=parseFloat(totalLandArea)*parseFloat(udsPercent)/100;
+                const currentLandValue=myLandSqft*calcEstimate().rate;
+                const futureLandValue=currentLandValue*Math.pow(1+landAppreciationRate/100,loanTenureYears);
+                const netPosition=futureLandValue-totalSpent;
+                return(
+                  <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                    <div style={{background:C.navy,borderRadius:10,padding:"14px 16px"}}>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                        <div>
+                          <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#94A3B8"}}>Monthly EMI</div>
+                          <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:18,color:"#F8FAFB"}}>₹{Math.round(emi).toLocaleString()}</div>
+                        </div>
+                        <div>
+                          <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#94A3B8"}}>Total Interest</div>
+                          <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:18,color:"#FCA5A5"}}>₹{fmtL(totalInterest)}</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{background:"#fff",borderRadius:10,border:`1px solid ${C.border}`,padding:12}}>
+                      <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:C.dark,marginBottom:8}}>💸 Total Spend Over {loanTenureYears} Years</div>
+                      {[["Down Payment",dp],["Principal",P],["Interest",totalInterest],["Maintenance",maintTotal],["Repairs",repairsTotal],["Property Tax",taxTotal]].map(([l,v])=>(
+                        <div key={l} style={{display:"flex",justifyContent:"space-between",fontFamily:"Inter,sans-serif",fontSize:12,padding:"3px 0"}}>
+                          <span style={{color:C.muted}}>{l}</span>
+                          <span style={{color:C.dark,fontWeight:600}}>₹{fmtL(v)}</span>
+                        </div>
+                      ))}
+                      <div style={{borderTop:`1px solid ${C.border}`,marginTop:6,paddingTop:8,display:"flex",justifyContent:"space-between"}}>
                         <span style={{fontFamily:"Inter,sans-serif",fontSize:13,fontWeight:700,color:C.dark}}>Total Spent</span>
                         <span style={{fontFamily:"Inter,sans-serif",fontSize:14,fontWeight:700,color:C.red}}>₹{fmtL(totalSpent)}</span>
                       </div>
                     </div>
-                  </div>
-
-                  {/* UDS Land Value Growth */}
-                  <div style={{background:"#F0FDF4",borderRadius:10,border:"1px solid #86EFAC",padding:"14px"}}>
-                    <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.green,marginBottom:10}}>🌱 Your UDS Land Value Growth</div>
-                    <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,marginBottom:10}}>
-                      Your share: {myLandSqft.toFixed(1)} sqft ({udsPercent}% of {parseFloat(totalLandArea).toLocaleString()} sqft)
-                    </div>
-                    <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:8}}>
-                      <div style={{textAlign:"center",background:"#fff",borderRadius:8,padding:"9px 6px"}}>
-                        <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>Land Value Today</div>
-                        <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.dark}}>₹{fmtL(currentLandValue)}</div>
-                      </div>
-                      <div style={{textAlign:"center",background:"#fff",borderRadius:8,padding:"9px 6px"}}>
-                        <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>At Loan End ({loanTenureYears}yr)</div>
-                        <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.green}}>₹{fmtL(futureLandValue)}</div>
-                      </div>
-                      <div style={{textAlign:"center",background:"#fff",borderRadius:8,padding:"9px 6px"}}>
-                        <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>Land Value Gain</div>
-                        <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.blue}}>+₹{fmtL(landValueGain)}</div>
+                    <div style={{background:"#F0FDF4",borderRadius:10,border:"1px solid #86EFAC",padding:12}}>
+                      <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:C.green,marginBottom:6}}>🌱 UDS Land Value Growth</div>
+                      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+                        {[["Now",currentLandValue],["At Loan End",futureLandValue],["Land Gain",futureLandValue-currentLandValue]].map(([l,v],i)=>(
+                          <div key={l} style={{textAlign:"center",background:"#fff",borderRadius:8,padding:"9px 6px"}}>
+                            <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>{l}</div>
+                            <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:i===2?C.blue:i===1?C.green:C.dark}}>₹{fmtL(v)}</div>
+                          </div>
+                        ))}
                       </div>
                     </div>
-                  </div>
-
-                  {/* Net position */}
-                  <div style={{background:netPosition>=0?"#F0FDF4":"#FFF7F5",borderRadius:10,border:"1px solid "+(netPosition>=0?"#86EFAC":"#FED7CC"),padding:"14px"}}>
-                    <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:netPosition>=0?C.green:C.red,marginBottom:6}}>
-                      {netPosition>=0?"✅":"⚠️"} Net Position at Loan End
-                    </div>
-                    <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark,lineHeight:1.7}}>
-                      Your land's future value (₹{fmtL(futureLandValue)}) {netPosition>=0?"exceeds":"is less than"} your total amount spent (₹{fmtL(totalSpent)}) by{" "}
-                      <strong style={{color:netPosition>=0?C.green:C.red}}>₹{fmtL(Math.abs(netPosition))}</strong>.
-                    </div>
-                    <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,marginTop:8,fontStyle:"italic"}}>
-                      Note: This compares only your UDS land value vs total spend — it excludes the building/structure value, which depreciates but still has resale value. Actual property resale value will be land value + depreciated structure value.
+                    <div style={{background:netPosition>=0?"#F0FDF4":"#FFF7F5",borderRadius:10,
+                      border:`1px solid ${netPosition>=0?"#86EFAC":"#FED7CC"}`,padding:12}}>
+                      <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:netPosition>=0?C.green:C.red,marginBottom:4}}>
+                        {netPosition>=0?"✅ Positive Net Position":"⚠️ Negative Net Position"}
+                      </div>
+                      <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark,lineHeight:1.7}}>
+                        Land value (₹{fmtL(futureLandValue)}) {netPosition>=0?"exceeds":"is less than"} total spent (₹{fmtL(totalSpent)}) by{" "}
+                        <strong style={{color:netPosition>=0?C.green:C.red}}>₹{fmtL(Math.abs(netPosition))}</strong>.
+                      </div>
                     </div>
                   </div>
+                );
+              })()}
+              {(!udsPercent||!totalLandArea||!loanAmount)&&(
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.muted,textAlign:"center",padding:20}}>
+                  Fill UDS %, total land area, and loan amount above to see calculations.
                 </div>
-              );
-            })()}
+              )}
+            </div>
+          )}
 
-            {(!udsPercent || !totalLandArea || !loanAmount) && (
-              <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.muted,textAlign:"center",padding:"20px"}}>
-                Fill in UDS %, total land area, and loan amount to see the full calculation.
-              </div>
-            )}
-          </div>
-        )}
+          {error&&<div style={{color:C.red,fontFamily:"Inter,sans-serif",fontSize:11,padding:"8px 12px",
+            background:"#FFF5F5",borderRadius:8,marginTop:8,wordBreak:"break-all"}}>{error}</div>}
+
+          <button onClick={analyze} disabled={loading||!locality.trim()}
+            style={{marginTop:12,width:"100%",background:loading?C.muted:C.navy,color:"#fff",border:"none",
+              borderRadius:8,padding:"13px",fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,
+              cursor:loading?"default":"pointer",opacity:!locality.trim()?0.6:1}}>
+            {loading?"Analyzing…":"Analyze Price Accuracy →"}
+          </button>
+        </div>
+      )}
 
 
-        {error && <div style={{color:C.red,fontFamily:"Inter,sans-serif",fontSize:11,padding:"8px 12px",background:"#FFF5F5",borderRadius:8,marginTop:10,wordBreak:"break-all"}}>{error}</div>}
-
-        <button onClick={analyze} disabled={loading||!locality.trim()}
-          style={{marginTop:12,width:"100%",background:loading?C.muted:C.navy,color:"#fff",border:"none",borderRadius:8,padding:"12px",fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,cursor:loading?"default":"pointer"}}>
-          {loading?"Analyzing…":"Analyze Price Accuracy →"}
-        </button>
-      </div>
-
-      {/* RESULTS */}
-      {result && (()=>{
-        const vc = verdictColor(result.accuracy_verdict);
-        const aiRate = result.market_rate_sqft;
-        const ourRate = result.our_estimate.rate;
-        const diff = Math.round(((aiRate-ourRate)/ourRate)*100);
-        const blendedRate = userMinPrice && userMaxPrice
-          ? Math.round((aiRate * 2 + (+userMinPrice + +userMaxPrice)/2) / 3)
-          : aiRate;
-        return (
+      {/* ══════════════════════════════════════════════════════════════════
+          RESULTS — shown for Full Valuation mode
+      ══════════════════════════════════════════════════════════════════ */}
+      {mode==="full"&&result&&(()=>{
+        const vc=verdictColor(result.accuracy_verdict);
+        const aiRate=result.market_rate_sqft||result.our_estimate?.rate;
+        const ourRate=result.our_estimate?.rate||aiRate;
+        const diff=Math.round(((aiRate-ourRate)/ourRate)*100);
+        const blendedRate=userMinPrice&&userMaxPrice?Math.round((aiRate*2+(+userMinPrice+(+userMaxPrice))/2)/3):aiRate;
+        const estArea=isPlot?plotArea:area;
+        return(
           <div style={{display:"flex",flexDirection:"column",gap:12}}>
+
             {/* Header */}
             <div style={{background:C.navy,borderRadius:12,padding:"18px 20px"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
@@ -4065,18 +4667,21 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
                 <div>
                   <div style={{color:"#F8FAFB",fontSize:22,fontFamily:"serif",marginBottom:2}}>
-                    ₹{aiRate.toLocaleString()}<span style={{fontSize:13,color:"#94A3B8"}}>/sqft (AI Market)</span>
+                    ₹{aiRate?.toLocaleString()}<span style={{fontSize:13,color:"#94A3B8"}}>/sqft (AI Market)</span>
                   </div>
-                  {userMinPrice && userMaxPrice && (
-                    <div style={{color:"#94A3B8",fontSize:12,fontFamily:"Inter,sans-serif"}}>
-                      Blended rate: ₹{blendedRate.toLocaleString()}/sqft · Total: ₹{fmtL(blendedRate*(isPlot?plotArea:area))}
-                    </div>
-                  )}
+                  {userMinPrice&&userMaxPrice&&<div style={{color:"#94A3B8",fontSize:12,fontFamily:"Inter,sans-serif"}}>
+                    Blended: ₹{blendedRate.toLocaleString()}/sqft · ₹{fmtL(blendedRate*estArea)}
+                  </div>}
                   <div style={{color:"#94A3B8",fontSize:12,fontFamily:"Inter,sans-serif",marginTop:2}}>
                     Range: ₹{fmtL(result.low_estimate)} – ₹{fmtL(result.high_estimate)}
                   </div>
+                  {result.gst_applicable&&result.gst_amount>0&&(
+                    <div style={{color:"#FCD34D",fontSize:11,fontFamily:"Inter,sans-serif",marginTop:3}}>
+                      + GST ({result.gst_rate_pct}%): ₹{fmtL(result.gst_amount)} → Total: ₹{fmtL(result.total_with_gst)}
+                    </div>
+                  )}
                 </div>
-                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:5}}>
                   <div style={{background:vc,color:"#fff",borderRadius:8,padding:"5px 14px",fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13}}>{result.accuracy_verdict}</div>
                   <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#94A3B8"}}>
                     {result.price_trend==="Rising"?"📈":result.price_trend==="Declining"?"📉":"➡️"} {result.price_trend} · {result.yoy_appreciation_pct}% YoY
@@ -4089,11 +4694,11 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
             {/* Score cards */}
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:8}}>
               {[
-                {l:"Formula Est.",v:"₹"+ourRate.toLocaleString()+"/sqft",sub:"Amenity + Infra + Civic",c:C.muted},
-                {l:"AI Market Rate",v:"₹"+aiRate.toLocaleString()+"/sqft",sub:result.verdict_reason,c:vc},
-                {l:"Gap",v:(diff>0?"+":"")+diff+"%",sub:Math.abs(diff)<5?"Closely aligned":Math.abs(diff)<15?"Moderate gap":"Large variance",c:Math.abs(diff)<5?C.green:Math.abs(diff)<15?C.amber:C.red},
+                {l:"Formula Est.",v:"₹"+ourRate?.toLocaleString()+"/sqft",sub:"Amenity+Infra+Civic",c:C.muted},
+                {l:"AI Market Rate",v:"₹"+aiRate?.toLocaleString()+"/sqft",sub:result.verdict_reason?.slice(0,50),c:vc},
+                {l:"Gap",v:(diff>0?"+":"")+diff+"%",sub:Math.abs(diff)<5?"Aligned":Math.abs(diff)<15?"Moderate":"Large variance",c:Math.abs(diff)<5?C.green:Math.abs(diff)<15?C.amber:C.red},
               ].map(m=>(
-                <div key={m.l} style={{background:"#fff",borderRadius:9,border:`1px solid ${C.border}`,padding:"10px"}}>
+                <div key={m.l} style={{background:"#fff",borderRadius:9,border:`1px solid ${C.border}`,padding:10}}>
                   <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,marginBottom:2}}>{m.l}</div>
                   <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:m.c}}>{m.v}</div>
                   <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,marginTop:2,lineHeight:1.4}}>{m.sub}</div>
@@ -4101,188 +4706,165 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
               ))}
             </div>
 
-            {/* Future Rate Prediction for Pricer */}
-            {result.market_rate_sqft&&(()=>{
-              const baseR=result.market_rate_sqft;
+            {/* Price projection chart */}
+            {aiRate&&(()=>{
               const yoy=result.yoy_appreciation_pct||8;
               const pts=[
-                {yr:"Now",  r:baseR, t:baseR*(isPlot?plotArea:area)},
-                {yr:"1 Yr", r:Math.round(baseR*Math.pow(1+yoy/100,1)), t:0},
-                {yr:"3 Yr", r:Math.round(baseR*Math.pow(1+yoy/100,3)), t:0},
-                {yr:"5 Yr", r:Math.round(baseR*Math.pow(1+yoy/100,5)), t:0},
-                {yr:"10 Yr",r:Math.round(baseR*Math.pow(1+yoy/100,10)), t:0},
-              ].map(p=>({...p,t:p.r*(isPlot?plotArea:area)}));
+                {yr:"Now",r:aiRate,t:aiRate*estArea},
+                {yr:"1Y",r:Math.round(aiRate*Math.pow(1+yoy/100,1)),t:0},
+                {yr:"3Y",r:Math.round(aiRate*Math.pow(1+yoy/100,3)),t:0},
+                {yr:"5Y",r:Math.round(aiRate*Math.pow(1+yoy/100,5)),t:0},
+                {yr:"10Y",r:Math.round(aiRate*Math.pow(1+yoy/100,10)),t:0},
+              ].map(p=>({...p,t:p.r*estArea}));
               const maxR=Math.max(...pts.map(p=>p.r));
-              const fmtK=(n)=>n>=10000000?(n/10000000).toFixed(2)+"Cr":n>=100000?(n/100000).toFixed(1)+"L":n>=1000?(n/1000).toFixed(0)+"k":n;
               const colors=["#94A3B8","#60A5FA","#F59E0B","#34D399","#1E6B4A"];
-              const gain10=pts[4].t-pts[0].t;
               return(
-                <div style={{background:"#fff",borderRadius:10,border:"1px solid "+C.border,padding:"14px",marginBottom:12}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                <div style={{background:"#fff",borderRadius:10,border:"1px solid "+C.border,padding:14}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                     <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.dark}}>📈 Price Projection</div>
                     <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.green,fontWeight:600}}>{yoy}% YoY est.</div>
                   </div>
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,marginBottom:12}}>
-                    Based on {result.price_trend} trend · {result.rental_yield_pct}% rental yield
-                  </div>
-                  {/* Bar chart */}
-                  <div style={{display:"flex",alignItems:"flex-end",gap:8,height:80,marginBottom:4}}>
+                  <div style={{display:"flex",alignItems:"flex-end",gap:8,height:70,marginBottom:4}}>
                     {pts.map((pt,i)=>{
-                      const barH=Math.max(14,Math.round((pt.r/maxR)*68));
+                      const h=Math.max(12,Math.round((pt.r/maxR)*60));
                       return(
                         <div key={pt.yr} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
-                          <div style={{fontFamily:"Inter,sans-serif",fontSize:8,fontWeight:700,color:colors[i]}}>
-                            {fmtK(pt.r)}
-                          </div>
-                          <div style={{width:"100%",background:colors[i],borderRadius:"3px 3px 0 0",height:barH+"px",opacity:0.88}}/>
+                          <div style={{fontFamily:"Inter,sans-serif",fontSize:8,fontWeight:700,color:colors[i]}}>₹{pt.r>=10000?Math.round(pt.r/1000)+"k":pt.r.toLocaleString()}</div>
+                          <div style={{width:"100%",background:colors[i],borderRadius:"3px 3px 0 0",height:h+"px",opacity:0.9}}/>
                         </div>
                       );
                     })}
                   </div>
                   <div style={{display:"flex",gap:8,marginBottom:10}}>
-                    {pts.map(pt=>(
-                      <div key={pt.yr} style={{flex:1,textAlign:"center",fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>{pt.yr}</div>
-                    ))}
+                    {pts.map(pt=><div key={pt.yr} style={{flex:1,textAlign:"center",fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>{pt.yr}</div>)}
                   </div>
-                  {/* Total value table */}
-                  <div style={{background:C.bg,borderRadius:8,padding:"10px 12px"}}>
-                    <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,color:C.dark,marginBottom:7}}>
-                      Total Property Value ({isPlot?plotArea+" "+plotAreaUnit:area+" sqft"})
-                    </div>
-                    <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:6}}>
-                      {[pts[0],pts[2],pts[4]].map((pt,i)=>(
-                        <div key={pt.yr} style={{textAlign:"center",background:"#fff",borderRadius:6,padding:"7px 4px",border:"1px solid "+C.border}}>
-                          <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,marginBottom:2}}>{pt.yr}</div>
-                          <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:i===2?C.green:C.dark}}>₹{fmtK(pt.t)}</div>
-                        </div>
-                      ))}
-                    </div>
-                    <div style={{marginTop:8,fontFamily:"Inter,sans-serif",fontSize:11,color:C.green,fontWeight:600,textAlign:"center"}}>
-                      Estimated 10yr gain: ₹{fmtK(gain10)} ({Math.round((gain10/pts[0].t)*100)}% total)
-                    </div>
-                  </div>
-                  <div style={{marginTop:8,fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,fontStyle:"italic"}}>
-                    ⚠️ AI projection based on current trend. Market conditions may vary. Not financial advice.
+                  <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.green,fontWeight:600,textAlign:"center"}}>
+                    10Y gain: ₹{fmtL(pts[4].t-pts[0].t)} ({Math.round((pts[4].t-pts[0].t)/pts[0].t*100)}%)
                   </div>
                 </div>
               );
             })()}
 
+            {/* Insights */}
+            <div style={{background:"#fff",borderRadius:10,border:`1px solid ${C.border}`,padding:13}}>
+              <div style={{fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,color:C.dark,marginBottom:8}}>📍 Market Insights</div>
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark,lineHeight:1.7,marginBottom:6}}>{result.locality_insight}</div>
+              {[
+                result.water_impact&&["💧",result.water_impact],
+                result.floor_impact&&["🏢",result.floor_impact],
+                result.developer_tier_impact&&["🏗️",result.developer_tier_impact],
+                result.approval_impact&&["📋",result.approval_impact],
+                result.view_premium_note&&["🏞️",result.view_premium_note],
+                result.sunlight_assessment&&["☀️",result.sunlight_assessment],
+              ].filter(Boolean).map(([icon,txt],i)=>(
+                <div key={i} style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,marginTop:4}}>{icon} {txt}</div>
+              ))}
+            </div>
+
             {/* Score breakdown */}
-            <div style={{background:"#fff",borderRadius:10,border:`1px solid ${C.border}`,padding:"13px"}}>
+            <div style={{background:"#fff",borderRadius:10,border:`1px solid ${C.border}`,padding:13}}>
               <div style={{fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,color:C.dark,marginBottom:10}}>Score Breakdown</div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                {[
-                  {l:"Amenity Score",v:amenityScore,note:result.amenity_score_impact},
-                  {l:"Civic Score",v:civicScore,note:result.civic_impact},
-                ].map(s=>(
-                  <div key={s.l} style={{background:C.bg,borderRadius:8,padding:"10px"}}>
+                {[{l:"Amenity Score",v:amenityScore,note:result.amenity_score_impact},{l:"Civic Score",v:civicScore,note:result.civic_impact}].map(s=>(
+                  <div key={s.l} style={{background:C.bg,borderRadius:8,padding:10}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
                       <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,color:C.dark}}>{s.l}</div>
                       <div style={{background:scoreColor(s.v),color:"#fff",borderRadius:5,padding:"1px 8px",fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:11}}>{s.v}</div>
                     </div>
-                    <div style={{background:C.border,borderRadius:99,height:5}}>
-                      <div style={{background:scoreColor(s.v),height:"100%",width:`${s.v}%`,borderRadius:99}}/>
-                    </div>
+                    <div style={{background:C.border,borderRadius:99,height:5}}><div style={{background:scoreColor(s.v),height:"100%",width:`${s.v}%`,borderRadius:99}}/></div>
                     {s.note&&<div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,marginTop:5,lineHeight:1.4}}>{s.note}</div>}
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* Insights */}
-            <div style={{background:"#fff",borderRadius:10,border:`1px solid ${C.border}`,padding:"13px"}}>
-              <div style={{fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,color:C.dark,marginBottom:8}}>📍 Market Insights</div>
-              <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark,lineHeight:1.7,marginBottom:6}}>{result.locality_insight}</div>
-              <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                {result.water_impact&&<div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted}}>💧 {result.water_impact}</div>}
-                {result.floor_impact&&<div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted}}>🏢 {result.floor_impact}</div>}
-                {result.developer_tier_impact&&<div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted}}>🏗️ {result.developer_tier_impact}</div>}
-              </div>
-            </div>
-
-            {/* Under Construction — Investor View */}
-            {result.isUC && result.completion_price_estimate && (
-              <div style={{background:"#FFFBEB",borderRadius:10,border:"1px solid #FDE68A",padding:"14px"}}>
-                <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:"#92400E",marginBottom:10}}>📈 Investment Analysis — Under Construction</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:8,marginBottom:10}}>
-                  <div style={{textAlign:"center",background:"#FEF9C3",borderRadius:8,padding:"10px 6px"}}>
-                    <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#92400E"}}>Book Now At</div>
-                    <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:14,color:C.dark}}>₹{aiRate.toLocaleString()}/sqft</div>
-                  </div>
-                  <div style={{textAlign:"center",background:"#F0FDF4",borderRadius:8,padding:"10px 6px"}}>
-                    <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.green}}>Est. At Possession</div>
-                    <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:14,color:C.green}}>₹{result.completion_price_estimate.toLocaleString()}/sqft</div>
-                  </div>
-                  <div style={{textAlign:"center",background:C.lightBlue,borderRadius:8,padding:"10px 6px"}}>
-                    <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.blue}}>Expected Gain</div>
-                    <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:14,color:C.blue}}>+{result.completion_appreciation_pct}%</div>
-                  </div>
-                </div>
-                {result.gst_note&&<div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#92400E",marginBottom:6}}>🧾 {result.gst_note}</div>}
-                {result.investment_recommendation&&<div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark,fontWeight:500}}>{result.investment_recommendation}</div>}
-              </div>
-            )}
-
-            {/* Comparables, Red Flags, Negotiation */}
-            {result.comparable_projects?.length>0&&(
-              <div style={{background:"#fff",borderRadius:10,border:"1px solid "+C.border,padding:"12px"}}>
-                <div style={{fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,color:C.dark,marginBottom:8}}>🏢 Comparable Projects</div>
-                {result.comparable_projects.map((p,i)=>{
-                  // Defensive: AI may return either a plain string or {name,rate_sqft,maps_link}
-                  const isObj = p && typeof p === "object";
-                  const name = isObj ? p.name : p;
-                  const rate = isObj ? p.rate_sqft : null;
-                  const link = isObj ? p.maps_link : null;
+            {/* Elder / kid friendliness */}
+            {(result.elder_friendliness||result.kid_friendliness)&&(
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                {[["👴 Elder Friendly",result.elder_friendliness],["👶 Kid Friendly",result.kid_friendliness]].filter(([,v])=>v).map(([label,val])=>{
+                  const part=val?.split(" - "); const rating=part?.[0]; const reason=part?.[1];
+                  const col=rating==="Good"?C.green:rating==="Average"?C.amber:C.red;
                   return(
-                    <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
-                      padding:"7px 0",borderBottom:i<result.comparable_projects.length-1?"1px solid "+C.border:"none"}}>
-                      <div>
-                        <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark,fontWeight:500}}>{name}</div>
-                        {rate&&<div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,marginTop:1}}>{rate}</div>}
-                      </div>
-                      {link&&(
-                        <a href={link} target="_blank" rel="noopener noreferrer"
-                          style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.blue,fontWeight:600,
-                            textDecoration:"none",flexShrink:0,marginLeft:10}}>
-                          📍 Map
-                        </a>
-                      )}
+                    <div key={label} style={{background:"#fff",borderRadius:9,border:`1px solid ${C.border}`,padding:11}}>
+                      <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,color:C.dark,marginBottom:4}}>{label}</div>
+                      <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:14,color:col,marginBottom:3}}>{rating}</div>
+                      {reason&&<div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,lineHeight:1.4}}>{reason}</div>}
                     </div>
                   );
                 })}
               </div>
             )}
+
+            {/* Under Construction investor view */}
+            {result.isUC&&result.completion_price_estimate&&(
+              <div style={{background:"#FFFBEB",borderRadius:10,border:"1px solid #FDE68A",padding:14}}>
+                <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:"#92400E",marginBottom:10}}>📈 Investment Analysis — Under Construction</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:8,marginBottom:8}}>
+                  {[["Book Now At",`₹${aiRate?.toLocaleString()}/sqft`,"#FEF9C3"],["Est. At Possession",`₹${result.completion_price_estimate.toLocaleString()}/sqft`,"#F0FDF4"],["Expected Gain",`+${result.completion_appreciation_pct}%`,"#EFF6FF"]].map(([l,v,bg])=>(
+                    <div key={l} style={{textAlign:"center",background:bg,borderRadius:8,padding:"10px 6px"}}>
+                      <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#92400E"}}>{l}</div>
+                      <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.dark}}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+                {result.gst_note&&<div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#92400E",marginBottom:4}}>🧾 {result.gst_note}</div>}
+                {result.investment_recommendation&&<div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark}}>{result.investment_recommendation}</div>}
+              </div>
+            )}
+
+            {/* Comparables */}
+            {result.comparable_projects?.length>0&&(
+              <div style={{background:"#fff",borderRadius:10,border:"1px solid "+C.border,padding:12}}>
+                <div style={{fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,color:C.dark,marginBottom:8}}>🏢 Comparable Projects</div>
+                {result.comparable_projects.map((p,i)=>{
+                  const isObj=p&&typeof p==="object";
+                  const name=isObj?p.name:p; const rate=isObj?p.rate_sqft:null; const link=isObj?p.maps_link:null; const dist=isObj?p.distance:null;
+                  return(
+                    <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                      padding:"8px 0",borderBottom:i<result.comparable_projects.length-1?"1px solid "+C.border:"none"}}>
+                      <div>
+                        <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark,fontWeight:500}}>{name}</div>
+                        {(rate||dist)&&<div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,marginTop:1}}>{rate}{dist&&` · ${dist}`}</div>}
+                      </div>
+                      {link&&<a href={link} target="_blank" rel="noopener noreferrer"
+                        style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.blue,fontWeight:600,textDecoration:"none",marginLeft:10}}>📍 Map</a>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Red flags, resale, yield, negotiation */}
             {result.red_flags?.length>0&&(
-              <div style={{background:"#FFF7F5",borderRadius:10,border:"1px solid #FED7CC",padding:"12px"}}>
+              <div style={{background:"#FFF7F5",borderRadius:10,border:"1px solid #FED7CC",padding:12}}>
                 <div style={{fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,color:C.red,marginBottom:6}}>🚩 Watch Out For</div>
-                {result.red_flags.map((f,i)=><div key={i} style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark,padding:"3px 0"}}>• {f}</div>)}
+                {result.red_flags.map((f,i)=><div key={i} style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark,padding:"2px 0"}}>• {f}</div>)}
               </div>
             )}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-              <div style={{background:"#F0FDF4",borderRadius:9,border:"1px solid #86EFAC",padding:"11px"}}>
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:600,color:C.green,marginBottom:3}}>Resale Potential</div>
+              <div style={{background:"#F0FDF4",borderRadius:9,border:"1px solid #86EFAC",padding:11}}>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:600,color:C.green,marginBottom:2}}>Resale Potential</div>
                 <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:15,color:C.green}}>{result.resale_potential}</div>
               </div>
-              <div style={{background:C.lightBlue,borderRadius:9,border:"1px solid #BFDBFE",padding:"11px"}}>
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:600,color:C.blue,marginBottom:3}}>Rental Yield</div>
+              <div style={{background:C.lightBlue,borderRadius:9,border:"1px solid #BFDBFE",padding:11}}>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:600,color:C.blue,marginBottom:2}}>Rental Yield</div>
                 <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:15,color:C.blue}}>{result.rental_yield_pct}% p.a.</div>
               </div>
             </div>
             {result.negotiation_tip&&(
-              <div style={{background:"#FFFBEB",borderRadius:9,border:"1px solid #FDE68A",padding:"11px"}}>
+              <div style={{background:"#FFFBEB",borderRadius:9,border:"1px solid #FDE68A",padding:11}}>
                 <div style={{fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:11,color:"#92400E",marginBottom:2}}>💡 Negotiation Tip</div>
                 <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark}}>{result.negotiation_tip}</div>
               </div>
             )}
 
             {/* Price feedback */}
-            {showFeedback && !feedback && (
-              <div style={{background:"#fff",borderRadius:10,border:`1px solid ${C.border}`,padding:"14px"}}>
+            {showFeedback&&!feedback&&(
+              <div style={{background:"#fff",borderRadius:10,border:`1px solid ${C.border}`,padding:14}}>
                 <div style={{fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,color:C.dark,marginBottom:6}}>🎯 Is this price accurate for your area?</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-                  <div><label style={LS}>Min price you've seen (₹/sqft)</label><input value={userMinPrice} onChange={e=>setUserMinPrice(e.target.value)} type="number" style={IS} placeholder="e.g. 6000"/></div>
-                  <div><label style={LS}>Max price you've seen (₹/sqft)</label><input value={userMaxPrice} onChange={e=>setUserMaxPrice(e.target.value)} type="number" style={IS} placeholder="e.g. 8000"/></div>
+                  <div><label style={LS}>Min ₹/sqft you've seen</label><input value={userMinPrice} onChange={e=>setUserMinPrice(e.target.value)} type="number" style={IS}/></div>
+                  <div><label style={LS}>Max ₹/sqft you've seen</label><input value={userMaxPrice} onChange={e=>setUserMaxPrice(e.target.value)} type="number" style={IS}/></div>
                 </div>
                 <div style={{display:"flex",gap:8}}>
                   <button onClick={()=>{setFeedback({type:"agree",msg:"Thanks! Marked as accurate."});setShowFeedback(false);}}
@@ -4292,9 +4874,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                 </div>
               </div>
             )}
-            {feedback&&(
-              <div style={{background:"#F0FDF4",borderRadius:9,border:"1px solid #86EFAC",padding:"11px 13px",fontFamily:"Inter,sans-serif",fontSize:12,color:C.green}}>✓ {feedback.msg}</div>
-            )}
+            {feedback&&<div style={{background:"#F0FDF4",borderRadius:9,border:"1px solid #86EFAC",padding:"11px 13px",fontFamily:"Inter,sans-serif",fontSize:12,color:C.green}}>✓ {feedback.msg}</div>}
           </div>
         );
       })()}
@@ -4302,50 +4882,10 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
   );
 }
 
-
-
-// ── Error boundary — without this, ANY render error anywhere in the tree
-// (a bad prop, an undefined access, a third-party library throwing) silently
-// blanks the entire page with zero visible explanation. This catches that
-// and shows what actually broke instead of a dead page.
-class ErrorBoundary extends Component {
-  constructor(props) { super(props); this.state = { error: null }; }
-  static getDerivedStateFromError(error) { return { error }; }
-  componentDidCatch(error, info) { console.error("App crashed:", error, info); }
-  render() {
-    if (this.state.error) {
-      return (
-        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
-          background: C.bg, padding: 24, fontFamily: "Inter,sans-serif" }}>
-          <div style={{ maxWidth: 480, background: "#fff", borderRadius: 12, border: "1px solid " + C.border,
-            padding: 24, textAlign: "center" }}>
-            <div style={{ fontSize: 32, marginBottom: 10 }}>⚠️</div>
-            <div style={{ fontWeight: 700, fontSize: 15, color: C.dark, marginBottom: 8 }}>Something went wrong</div>
-            <div style={{ fontSize: 12, color: C.muted, marginBottom: 14, lineHeight: 1.6 }}>
-              The app hit an unexpected error and couldn't render. This is usually a missing or
-              misconfigured environment variable, or a temporary issue — reloading often fixes it.
-            </div>
-            <div style={{ fontSize: 10, color: "#C84B31", background: "#FFF5F5", borderRadius: 6,
-              padding: "8px 10px", marginBottom: 14, textAlign: "left", fontFamily: "monospace",
-              wordBreak: "break-word", maxHeight: 120, overflow: "auto" }}>
-              {String(this.state.error?.message || this.state.error)}
-            </div>
-            <button onClick={() => window.location.reload()} style={{ background: C.navy, color: "#fff",
-              border: "none", borderRadius: 8, padding: "9px 18px", fontFamily: "Inter,sans-serif",
-              fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
-              Reload page
-            </button>
-          </div>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-
 function AppInner(){
   const [tab,setTab]=useState("home");
   const [analyzeQuery,setAnalyzeQuery]=useState("");
+  useAppData(); // loads ETL data into REGION_CLUSTERS + INDIA_METRO_STATIONS
 
   const handleStateClick=(stateName)=>{
     setAnalyzeQuery(stateName);
@@ -4386,6 +4926,23 @@ function AppInner(){
   );
 }
 
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error("App error:", error, info); }
+  render() {
+    if (this.state.error) return (
+      <div style={{padding:24,fontFamily:"Inter,sans-serif",color:"#C84B31",textAlign:"center"}}>
+        <div style={{fontSize:18,marginBottom:8}}>⚠️ Something went wrong</div>
+        <div style={{fontSize:12,color:"#64748B"}}>{this.state.error.message}</div>
+        <button onClick={()=>this.setState({error:null})} style={{marginTop:12,padding:"8px 16px",background:"#0F1B2D",color:"#fff",border:"none",borderRadius:8,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>
+          Try again
+        </button>
+      </div>
+    );
+    return this.props.children;
+  }
+}
 export default function App() {
   return (
     <ErrorBoundary>

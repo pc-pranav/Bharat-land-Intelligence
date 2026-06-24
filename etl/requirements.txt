@@ -1,0 +1,33 @@
+# Bharat Land Intelligence — ETL Pipeline Dependencies
+# Run: pip install -r requirements.txt
+
+# Core data processing
+pandas>=2.1.0
+numpy>=1.26.0
+
+# HTTP requests (data.gov.in API, RERA portals)
+requests>=2.31.0
+urllib3>=2.0.0
+
+# HTML parsing (RERA portal scraping)
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# Schema validation
+pydantic>=2.4.0
+
+# Geocoding (for resolving locality names to lat/lng)
+geopy>=2.4.0
+
+# Progress bars
+tqdm>=4.66.0
+
+# Fuzzy string matching (project/company name search)
+rapidfuzz>=3.4.0
+
+# Optional: PySpark (for large-scale production runs)
+# Uncomment if you want to run on a Spark cluster or Databricks:
+# pyspark>=3.4.0
+
+# Dev / testing
+pytest>=7.4.0
