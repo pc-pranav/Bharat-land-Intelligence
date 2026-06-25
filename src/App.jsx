@@ -942,7 +942,7 @@ function IndiaMap({pins=[],onStateClick,selectedState=null,focusLat=null,focusLn
 
 // ── MapView — uses built-in SVG IndiaMap (no external dependencies required) ──
 function MapView(props) {
-  const apiKey = (typeof import.meta !== "undefined" && import.meta.env?.VITE_GOOGLE_MAPS_API_KEY) || null;
+  const apiKey = null; // Google Maps not used in artifact preview
   const [useGoogle, setUseGoogle] = useState(!!apiKey);
   const mapProps = { stateGrowth: STATE_GROWTH, regionClusters: REGION_CLUSTERS, ...props };
   if (!apiKey) return <IndiaMap {...props} />;
@@ -2990,7 +2990,13 @@ const CITY_TIER_RATES = {
   tier4: {apartment:2500, villa:2800, plot:700, penthouse:4200, cities:[]},
 };
 
-function getCityTierRate(cityInput, propertyKind){
+function getCityTierRate(cityInput, propertyKind, localityInput){
+  // Try locality-level rate first (much more accurate)
+  if(localityInput) {
+    const localityRate = getLocalityRate(localityInput, cityInput, propertyKind);
+    if(localityRate) return localityRate;
+  }
+  // Fall back to city tier
   const c = (cityInput||"").toLowerCase().trim();
   for(const tier of ["tier1","tier2","tier3"]){
     if(CITY_TIER_RATES[tier].cities.some(name=>c.includes(name))){
@@ -2999,6 +3005,214 @@ function getCityTierRate(cityInput, propertyKind){
   }
   return CITY_TIER_RATES.tier4[propertyKind] || CITY_TIER_RATES.tier4.apartment;
 }
+
+// ── Locality-level base rates (₹/sqft for apartments) ─────────────────────────
+// Curated from market data — used to refine the city-tier base rate
+// Format: [match_keywords, rate_sqft, tier_multiplier_note]
+const LOCALITY_RATES = {
+  // ── Bengaluru ──────────────────────────────────────────────────────────────
+  "whitefield":          10500,
+  "brookefield":         11000,
+  "varthur":             8500,
+  "sarjapur":            9000,
+  "sarjapura":           9000,
+  "panathur":            9500,
+  "bellandur":           10000,
+  "marathahalli":        9500,
+  "hsr layout":          12500,
+  "hsr":                 12500,
+  "koramangala":         14000,
+  "indiranagar":         15000,
+  "indira nagar":        15000,
+  "jayanagar":           13000,
+  "jp nagar":            11000,
+  "banashankari":        9500,
+  "bannerghatta":        8000,
+  "electronic city":     6500,
+  "electronics city":    6500,
+  "hebbal":              11000,
+  "hennur":              8500,
+  "thanisandra":         8000,
+  "yelahanka":           7500,
+  "devanahalli":         6000,
+  "kengeri":             6500,
+  "tumkur road":         6000,
+  "rajajinagar":         12000,
+  "malleshwaram":        13500,
+  "jayanagar":           13000,
+  "btm layout":          10500,
+  "btm":                 10500,
+  "rt nagar":            9000,
+  "rt nagar":            9000,
+  "ramamurthy nagar":    7500,
+  "kr puram":            7000,
+  "kr puram":            7000,
+  "domlur":              13000,
+  "old airport road":    12000,
+  "richmond town":       16000,
+  "mg road":             16000,
+  "ulsoor":              13000,
+  "frazer town":         12500,
+  "hoskote":             5000,
+  "bagalur":             4500,
+  "chandapura":          5500,
+  "bommasandra":         5500,
+  "attibele":            5000,
+  "kadugodi":            9000,
+  "hoodi":               9500,
+  "nagarbhavi":          8500,
+  "bannerghatta road":   8500,
+  "gottigere":           7000,
+  "hulimavu":            8000,
+  "arekere":             8500,
+  "begur":               7500,
+  "huskur":              5500,
+  "dommasandra":         5500,
+  "carmelaram":          6500,
+  // ── Hyderabad ─────────────────────────────────────────────────────────────
+  "gachibowli":          8500,
+  "hitech city":         9000,
+  "hitec city":          9000,
+  "madhapur":            8500,
+  "kondapur":            7500,
+  "manikonda":           6500,
+  "narsingi":            6000,
+  "financial district":  8000,
+  "kokapet":             7000,
+  "puppalaguda":         6500,
+  "raidurgam":           7500,
+  "jubilee hills":       12000,
+  "banjara hills":       13000,
+  "film nagar":          10000,
+  "kukatpally":          6000,
+  "miyapur":             5500,
+  "bachupally":          5500,
+  "kompally":            5000,
+  "shamshabad":          4500,
+  "uppal":               5000,
+  "lb nagar":            5000,
+  "secunderabad":        7000,
+  // ── Mumbai ───────────────────────────────────────────────────────────────
+  "bandra":              35000,
+  "andheri":             18000,
+  "powai":               18000,
+  "goregaon":            14000,
+  "malad":               13000,
+  "borivali":            12000,
+  "thane":               10000,
+  "navi mumbai":         8500,
+  "kharghar":            7500,
+  "ulwe":                6500,
+  "panvel":              6000,
+  "kandivali":           12500,
+  "worli":               40000,
+  "lower parel":         35000,
+  "prabhadevi":          35000,
+  "dadar":               25000,
+  "mulund":              13000,
+  "vikhroli":            12000,
+  "kanjurmarg":          14000,
+  "bhandup":             11000,
+  "mira road":           9500,
+  "vasai":               7500,
+  "virar":               6500,
+  // ── Pune ─────────────────────────────────────────────────────────────────
+  "hinjewadi":           8000,
+  "wakad":               8500,
+  "baner":               9500,
+  "balewadi":            9000,
+  "aundh":               10000,
+  "kothrud":             10500,
+  "hadapsar":            7500,
+  "magarpatta":          9000,
+  "viman nagar":         9500,
+  "kalyani nagar":       10000,
+  "koregaon park":       13000,
+  "camp":                12000,
+  "kharadi":             8500,
+  "nagar road":          7500,
+  "sus":                 7000,
+  "ravet":               7000,
+  "undri":               6500,
+  "wagholi":             6000,
+  "talegaon":            5000,
+  // ── Chennai ──────────────────────────────────────────────────────────────
+  "omr":                 7500,
+  "old mahabalipuram road": 7500,
+  "ecr":                 8000,
+  "east coast road":     8000,
+  "velachery":           8500,
+  "adyar":               13000,
+  "besant nagar":        14000,
+  "t nagar":             13000,
+  "anna nagar":          12000,
+  "porur":               7000,
+  "tambaram":            5500,
+  "chromepet":           6000,
+  "perumbakkam":         5500,
+  "sholinganallur":      8000,
+  "perungudi":           8500,
+  "navalur":             7000,
+  "siruseri":            6000,
+  // ── Delhi NCR ────────────────────────────────────────────────────────────
+  "dwarka":              7500,
+  "rohini":              7000,
+  "janakpuri":           8500,
+  "vasant kunj":         14000,
+  "saket":               15000,
+  "greater kailash":     18000,
+  "defence colony":      20000,
+  "golf course road":    15000,
+  "sohna road":          8000,
+  "sector 67":           9000,
+  "sector 57":           10000,
+  "dlf phase":           14000,
+  "cyber city":          13000,
+  "sector 82":           7500,
+  "sector 83":           7500,
+  "sector 108":          8500,
+  "noida extension":     5500,
+  "greater noida west":  5000,
+  "tech zone":           5000,
+  "yamuna expressway":   4500,
+};
+
+// ── Get locality-adjusted rate ────────────────────────────────────────────────
+function getLocalityRate(locality, city, propKind) {
+  if(!locality) return null;
+  const loc = locality.toLowerCase().trim();
+  // Try exact and partial matches on locality string
+  for(const [key, rate] of Object.entries(LOCALITY_RATES)) {
+    if(loc.includes(key) || key.includes(loc.split(',')[0].trim())) {
+      // Scale non-apartment types using city tier ratios
+      if(propKind === 'villa')      return Math.round(rate * 1.28);
+      if(propKind === 'penthouse')  return Math.round(rate * 1.85);
+      if(propKind === 'plot')       return Math.round(rate * 0.48);
+      return rate; // apartment
+    }
+  }
+  return null; // fall back to city tier
+}
+
+// ── AI rate premium by locality tier (+2k–3k/sqft) ─────────────────────────
+// Applied on top of AI market_rate_sqft — AI tends to underestimate
+// on-ground premiums in high-demand micro-markets
+function getAIPremium(locality, city) {
+  if(!locality) return 2000;
+  const loc = (locality + ' ' + (city||'')).toLowerCase();
+  const tier3k = ['koramangala','indiranagar','bandra','worli','lower parel',
+    'prabhadevi','adyar','besant nagar','defence colony','greater kailash',
+    'vasant kunj','jubilee hills','banjara hills','koregaon park','richmond town',
+    'mg road','jayanagar','malleshwaram','saket','golf course','dlf phase'];
+  const tier25k = ['whitefield','bellandur','hsr','marathahalli','hebbal',
+    'panathur','gachibowli','hitech city','madhapur','kondapur','financial district',
+    'powai','andheri','thane','viman nagar','kalyani nagar','baner','omr',
+    'velachery','anna nagar','wakad','kothrud','aundh','balewadi','kharadi'];
+  if(tier3k.some(t => loc.includes(t))) return 3000;
+  if(tier25k.some(t => loc.includes(t))) return 2500;
+  return 2000;
+}
+
 
 // ── Property tax rates by state (approx annual % of assessed/market value) ──
 const PROPERTY_TAX_RATES = {
@@ -3135,6 +3349,72 @@ const CITY_GROUPS = Object.keys(APPROVAL_TYPES);
 //   Internal tab B — Full Valuation: 5-step wizard with live amenity pricing
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Shared formatters — module level so outside components can use them ─────────
+const fmtL = (n) => n >= 10000000 ? (n/10000000).toFixed(2)+"Cr" : n >= 100000 ? (n/100000).toFixed(2)+"L" : n >= 1000 ? (n/1000).toFixed(0)+"k" : String(Math.round(n||0));
+const fmt   = (n) => "₹" + fmtL(n);
+const fmtCr = (n) => `₹${(n/1e7).toFixed(2)} Cr`;
+
+// ── Live estimate bar — outside PricerTab so memo works ──────────────────────
+const PricerLiveEstimate = React.memo(function PricerLiveEstimate({est, gst, city}) {
+  return (
+    <div style={{background:"linear-gradient(135deg,#0F1B2D,#1E3A5F)",borderRadius:10,
+      padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",
+      position:"sticky",bottom:0,zIndex:10}}>
+      <div>
+        <div style={{color:"#94A3B8",fontSize:9,fontFamily:"Inter,sans-serif",
+          textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Live estimate · {city}</div>
+        <div style={{color:"#F8FAFB",fontFamily:"serif",fontSize:16}}>
+          {fmt(est.low)} – {fmtCr(est.high)}
+        </div>
+        {gst.amount>0 && <div style={{color:"#FCD34D",fontSize:10,fontFamily:"Inter,sans-serif",marginTop:1}}>
+          + GST {gst.rate}% → {fmt(gst.total)}
+        </div>}
+      </div>
+      <div style={{textAlign:"right"}}>
+        <div style={{color:"#34D399",fontSize:14,fontWeight:700,fontFamily:"Inter,sans-serif"}}>
+          ₹{est.rate?.toLocaleString()}/sqft
+        </div>
+        <div style={{color:"#94A3B8",fontSize:9,fontFamily:"Inter,sans-serif",marginTop:1}}>
+          Updates as you fill
+        </div>
+      </div>
+    </div>
+  );
+});
+
+
+// ── Live estimate bar wrapper — avoids IIFE-return-JSX Babel issue ────────────
+const PricerEstimateBar = React.memo(function PricerEstimateBar({calcEstimate, calcGST, city}) {
+  const est = calcEstimate();
+  const gst = calcGST(est.total);
+  if(isNaN(est.rate) || est.rate <= 0) return null;
+  return <PricerLiveEstimate est={est} gst={gst} city={city}/>;
+});
+
+
+// ── Collapsible group card — defined outside PricerTab so React.memo works ────
+const PricerGroup = React.memo(function PricerGroup({open, onToggle, icon, title, badge, children}) {
+  return (
+    <div style={{background:"#fff",border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden",marginBottom:6}}>
+      <div onClick={onToggle}
+        style={{padding:"10px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",
+          cursor:"pointer",background:open?"#fff":"#FAFBFC"}}>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <span style={{fontSize:13}}>{icon}</span>
+          <span style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,color:C.dark}}>{title}</span>
+          {badge != null && <span style={{fontSize:9,background:"#EFF6FF",color:C.blue,
+            padding:"1px 7px",borderRadius:8,fontWeight:600}}>{badge}</span>}
+        </div>
+        <span style={{color:C.muted,fontSize:12,transform:open?"rotate(0)":"rotate(180deg)",
+          transition:"transform .2s"}}>{open?"▲":"▼"}</span>
+      </div>
+      {open && <div style={{padding:"10px 12px",display:"flex",flexDirection:"column",gap:8,
+        borderTop:`1px solid ${C.border}`}}>{children}</div>}
+    </div>
+  );
+});
+
+
 function PricerTab(){
   const [mode, setMode] = useState("quick"); // "quick" | "full"
 
@@ -3234,9 +3514,7 @@ function PricerTab(){
 
 
   // ── Helpers ────────────────────────────────────────────────────────────────
-  const fmtL = (n) => n >= 10000000 ? (n/10000000).toFixed(2)+"Cr" : n >= 100000 ? (n/100000).toFixed(2)+"L" : n >= 1000 ? (n/1000).toFixed(0)+"k" : String(Math.round(n||0));
-  const fmt  = (n) => "₹" + fmtL(n);
-  const fmtCr= (n) => `₹${(n/1e7).toFixed(2)} Cr`;
+  // fmt/fmtL/fmtCr defined at module level
 
   const toggleAmenity = (id) => setSelAmenities(p => p.includes(id) ? p.filter(x=>x!==id) : [...p,id]);
   const toggleCivicGood = (id) => setCivicGood(p => p.includes(id) ? p.filter(x=>x!==id) : [...p,id]);
@@ -3297,7 +3575,7 @@ function PricerTab(){
   const civicPremium   = (civicScore-50)*8;
   const viewPremium    = (hasLakeView?350:0)+(hasGardenView?200:0)+(hasParkView?150:0)+(hasCityView?220:0)+(hasDuplex?600:0)+(hasServantRoom?120:0);
   const propKind       = isPlot?"plot":isVilla?"villa":isPenthouse?"penthouse":"apartment";
-  const BASE_RATE      = getCityTierRate(city,propKind);
+  const BASE_RATE      = getCityTierRate(city,propKind,locality);
   const normCorrFactor = priceCorrections.length>0
     ? priceCorrections.slice(-3).reduce((s,c)=>s+c.factor,0)/Math.min(3,priceCorrections.length)
     : 1.0;
@@ -3446,7 +3724,18 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
       const text = d.content?.map(b=>b.text||"").join("")||"";
       const parsed = parseJSON(text);
       if(parsed) {
-        setResult({...parsed, our_estimate:est, isUC, constructionStatus, gst});
+        const aiPremium = getAIPremium(locality, city);
+        const adjRate  = (parsed.market_rate_sqft||0) + aiPremium;
+        const adjTotal = adjRate * (isPlot ? (+plotArea||1200) : (+area||1200));
+        setResult({
+          ...parsed,
+          market_rate_sqft: adjRate,
+          total_value:       adjTotal,
+          low_estimate:      Math.round(adjTotal * 0.92),
+          high_estimate:     Math.round(adjTotal * 1.10),
+          our_estimate:est, isUC, constructionStatus, gst,
+          _premium: aiPremium,
+        });
         setShowFeedback(true);
       } else {
         // Formula fallback
@@ -3479,7 +3768,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
 
   const verdictColor = (v) => !v?C.muted:v==="Undervalued"?C.green:v==="Fair Value"?C.blue:v==="Overvalued"?C.red:C.amber;
   const sectionBtn = (id,label) => (
-    <button key={id} onClick={()=>setActiveSection(id)}
+    <button key={id} onClick={(e)=>{e.preventDefault();setActiveSection(id);}}
       style={{padding:"7px 14px",fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,
         background:activeSection===id?C.blue:"#F1F5F9",color:activeSection===id?"#fff":C.muted,
         border:"none",borderRadius:20,cursor:"pointer"}}>{label}</button>
@@ -3494,30 +3783,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
     location:true, unit:true, building:true, legal:true,
     quality:true, views:true, maintenance:true
   });
-  const toggleGroup = (k) => setOpenGroups(p => ({...p, [k]: !p[k]}));
-
-  const G = ({id, icon, title, badge, children}) => {
-    const open = openGroups[id];
-    const hasBadge = badge != null;
-    return (
-      <div style={{background:"#fff",border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden",marginBottom:6}}>
-        <div onClick={()=>toggleGroup(id)}
-          style={{padding:"10px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",
-            cursor:"pointer",background:open?"#fff":"#FAFBFC"}}>
-          <div style={{display:"flex",alignItems:"center",gap:6}}>
-            <span style={{fontSize:13}}>{icon}</span>
-            <span style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,color:C.dark}}>{title}</span>
-            {hasBadge && <span style={{fontSize:9,background:"#EFF6FF",color:C.blue,
-              padding:"1px 7px",borderRadius:8,fontWeight:600}}>{badge}</span>}
-          </div>
-          <span style={{color:C.muted,fontSize:12,transform:open?"rotate(0)":"rotate(180deg)",
-            transition:"transform .2s"}}>{open?"▲":"▼"}</span>
-        </div>
-        {open && <div style={{padding:"10px 12px",display:"flex",flexDirection:"column",gap:8,
-          borderTop:`1px solid ${C.border}`}}>{children}</div>}
-      </div>
-    );
-  };
+  const toggleGroup = React.useCallback((k) => setOpenGroups(p => ({...p, [k]: !p[k]})), []);
 
   const PROP_TYPES_FULL = [
     {type:"Apartment / Flat",      icon:"🏢", sub:"Flats & units"},
@@ -3538,37 +3804,6 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
   const sectionIdx = SECTION_CONFIG.findIndex(s=>s.id===activeSection);
 
   // Live estimate bar (always visible in full valuation mode)
-  const LiveEstimate = () => {
-    if(!locality.trim() && !city) return null;
-    const est = calcEstimate();
-    const gst = calcGST(est.total);
-    if(isNaN(est.rate) || est.rate <= 0) return null;
-    return (
-      <div style={{background:"linear-gradient(135deg,#0F1B2D,#1E3A5F)",borderRadius:10,
-        padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",
-        position:"sticky",bottom:0,zIndex:10}}>
-        <div>
-          <div style={{color:"#94A3B8",fontSize:9,fontFamily:"Inter,sans-serif",
-            textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>Live estimate</div>
-          <div style={{color:"#F8FAFB",fontFamily:"serif",fontSize:16}}>
-            {fmt(est.low)} – {fmtCr(est.high)}
-          </div>
-          {gst.amount>0 && <div style={{color:"#FCD34D",fontSize:10,fontFamily:"Inter,sans-serif",marginTop:1}}>
-            + GST {gst.rate}% → {fmt(gst.total)}
-          </div>}
-        </div>
-        <div style={{textAlign:"right"}}>
-          <div style={{color:"#34D399",fontSize:14,fontWeight:700,fontFamily:"Inter,sans-serif"}}>
-            ₹{est.rate?.toLocaleString()}/sqft
-          </div>
-          <div style={{color:"#94A3B8",fontSize:9,fontFamily:"Inter,sans-serif",marginTop:1}}>
-            Updates as you fill
-          </div>
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div style={{display:"flex",flexDirection:"column",gap:10}}>
 
@@ -3736,7 +3971,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
             <div style={{display:"flex",flexDirection:"column",gap:0}}>
 
               {/* Group 1: Location */}
-              <G id="location" icon="📍" title="Location" badge={locality?"filled":null}>
+              <PricerGroup open={openGroups["location"]} onToggle={()=>toggleGroup("location")} icon="📍" title="Location" badge={locality?"filled":null}>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                   <div><label style={LS}>City</label>
                     <input value={city} onChange={e=>setCity(e.target.value)} style={IS} placeholder="Bengaluru"/>
@@ -3745,11 +3980,11 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                     <input value={locality} onChange={e=>setLocality(e.target.value)} style={IS} placeholder="e.g. Whitefield"/>
                   </div>
                 </div>
-              </G>
+              </PricerGroup>
 
               {/* Group 2: Unit Details */}
               {!isPlot&&(
-                <G id="unit" icon="🏠" title="Unit Details">
+                <PricerGroup open={openGroups["unit"]} onToggle={()=>toggleGroup("unit")} icon="🏠" title="Unit Details">
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                     <div><label style={LS}>BHK / Config</label>
                       <select value={bhk} onChange={e=>setBhk(e.target.value)} style={IS}>
@@ -3764,20 +3999,20 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                   </div>
                   <div>
                     <label style={LS}>Area (sqft) — <strong style={{color:C.dark}}>{(+area||0).toLocaleString()}</strong></label>
-                    <input type="range" min={300} max={8000} step={50} value={area||1200} onChange={e=>setArea(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                    <input type="range" min={300} max={8000} step={50} value={area||1200} onChange={e=>setArea(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
                     <div style={{display:"flex",justifyContent:"space-between",fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,marginTop:2}}>
                       <span>300</span><span>8,000</span>
                     </div>
                   </div>
-                </G>
+                </PricerGroup>
               )}
 
               {isPlot&&(
-                <G id="unit" icon="🏗️" title="Plot Details">
+                <PricerGroup open={openGroups["unit"]} onToggle={()=>toggleGroup("unit")} icon="🏗️" title="Plot Details">
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                     <div>
                       <label style={LS}>Plot Area — <strong style={{color:C.dark}}>{(+plotArea||0).toLocaleString()}</strong></label>
-                      <input type="range" min={100} max={20000} step={100} value={plotArea||1200} onChange={e=>setPlotArea(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                      <input type="range" min={100} max={20000} step={100} value={plotArea||1200} onChange={e=>setPlotArea(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
                     </div>
                     <div><label style={LS}>Unit</label>
                       <select value={plotAreaUnit} onChange={e=>setPlotAreaUnit(e.target.value)} style={IS}>
@@ -3785,12 +4020,12 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                       </select>
                     </div>
                   </div>
-                </G>
+                </PricerGroup>
               )}
 
               {/* Group 3: Building */}
               {!isPlot&&(
-                <G id="building" icon="🏗️" title="Building">
+                <PricerGroup open={openGroups["building"]} onToggle={()=>toggleGroup("building")} icon="🏗️" title="Building">
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                     <div><label style={LS}>Building Type</label>
                       <select value={buildingType} onChange={e=>setBuildingType(e.target.value)} style={IS}>
@@ -3809,40 +4044,40 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                         <label style={LS}>Total Floors — <strong style={{color:C.dark}}>{totalFloors}</strong></label>
                         <input type="range" min={1} max={60} value={totalFloors}
                           onChange={e=>{setTotalFloors(+e.target.value);if(selectedFloor>+e.target.value)setSelectedFloor(+e.target.value);}}
-                          style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                          style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
                       </div>
                       <div>
                         <label style={LS}>Your Floor — <strong style={{color:C.dark}}>{selectedFloor===0?"G":selectedFloor}</strong></label>
                         <input type="range" min={0} max={totalFloors} value={selectedFloor}
                           onChange={e=>setSelectedFloor(+e.target.value)}
-                          style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                          style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
                       </div>
                     </div>
                   )}
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                     <div>
                       <label style={LS}>Blocks — <strong style={{color:C.dark}}>{totalBlocks}</strong></label>
-                      <input type="range" min={1} max={30} value={totalBlocks} onChange={e=>setTotalBlocks(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                      <input type="range" min={1} max={30} value={totalBlocks} onChange={e=>setTotalBlocks(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
                     </div>
                     <div>
                       <label style={LS}>Car Parking — <strong style={{color:C.dark}}>{carParking}</strong></label>
-                      <input type="range" min={0} max={4} value={carParking} onChange={e=>setCarParking(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                      <input type="range" min={0} max={4} value={carParking} onChange={e=>setCarParking(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
                     </div>
                   </div>
                   {!isVilla&&(
                     <div>
                       <label style={LS}>Total Flats — <strong style={{color:C.dark}}>{totalFlatsInBuilding}</strong></label>
-                      <input type="range" min={4} max={2000} step={4} value={totalFlatsInBuilding} onChange={e=>setTotalFlatsInBuilding(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                      <input type="range" min={4} max={2000} step={4} value={totalFlatsInBuilding} onChange={e=>setTotalFlatsInBuilding(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
                       <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,marginTop:2}}>
                         {totalFlatsInBuilding<=50?"Low density":totalFlatsInBuilding<=200?"Medium density":totalFlatsInBuilding<=500?"High density":"Very high density"}
                       </div>
                     </div>
                   )}
-                </G>
+                </PricerGroup>
               )}
 
               {/* Group 4: Developer & Construction */}
-              <G id="developer" icon="👷" title="Developer & Construction">
+              <PricerGroup open={openGroups["developer"]} onToggle={()=>toggleGroup("developer")} icon="👷" title="Developer & Construction">
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                   <div><label style={LS}>Developer</label>
                     <select value={developer} onChange={e=>setDeveloper(e.target.value)} style={IS}>
@@ -3881,10 +4116,10 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                     </div>
                   )}
                 </div>
-              </G>
+              </PricerGroup>
 
               {/* Group 5: Legal, Quality, Community */}
-              <G id="legal" icon="⚖️" title="Legal & Approval">
+              <PricerGroup open={openGroups["legal"]} onToggle={()=>toggleGroup("legal")} icon="⚖️" title="Legal & Approval">
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                   <div><label style={LS}>State</label>
                     <select value={approvalState||detectStateFromCity(city)} onChange={e=>setApprovalState(e.target.value)} style={IS}>
@@ -3907,10 +4142,10 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                     </select>
                   </div>
                 </div>
-              </G>
+              </PricerGroup>
 
               {/* Group 6: Quality */}
-              <G id="quality" icon="🏆" title="Construction Quality">
+              <PricerGroup open={openGroups["quality"]} onToggle={()=>toggleGroup("quality")} icon="🏆" title="Construction Quality">
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                   <div><label style={LS}>Build Quality</label>
                     <select value={constructionQuality} onChange={e=>setConstructionQuality(e.target.value)} style={IS}>
@@ -3925,14 +4160,14 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                   {!isPlot&&(
                     <div>
                       <label style={LS}>Balconies — <strong style={{color:C.dark}}>{noBalconies}</strong></label>
-                      <input type="range" min={0} max={4} value={noBalconies} onChange={e=>setNoBalconies(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                      <input type="range" min={0} max={4} value={noBalconies} onChange={e=>setNoBalconies(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
                     </div>
                   )}
                 </div>
-              </G>
+              </PricerGroup>
 
               {/* Group 7: Views & Special */}
-              <G id="views" icon="🌅" title="Views & Special Features">
+              <PricerGroup open={openGroups["views"]} onToggle={()=>toggleGroup("views")} icon="🌅" title="Views & Special Features">
                 <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
                   {[
                     {l:"🏞️ Lake View",     s:hasLakeView,    f:setHasLakeView,   p:"+5-8%"},
@@ -3952,19 +4187,31 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                     </button>
                   ))}
                 </div>
-              </G>
+              </PricerGroup>
 
               {/* Group 8: Maintenance */}
               {!isPlot&&(
-                <G id="maintenance" icon="🔧" title="Maintenance & Costs">
-                  <button onClick={()=>setAutoCalc(!autoCalc)}
-                    style={{padding:"7px 10px",fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:11,
-                      background:autoCalc?C.blue:"#F1F5F9",color:autoCalc?"#fff":C.muted,
-                      border:"none",borderRadius:7,cursor:"pointer",textAlign:"left",width:"100%"}}>
-                    {autoCalc?"✓ Auto-calculate maintenance":"Manual entry"}
-                  </button>
+                <PricerGroup open={openGroups["maintenance"]} onToggle={()=>toggleGroup("maintenance")} icon="🔧" title="Maintenance & Costs">
+                  {/* Segmented control — clear two-option picker */}
+                  <div style={{display:"flex",background:"#F1F5F9",borderRadius:9,padding:3,gap:3}}>
+                    <button onClick={()=>setAutoCalc(true)}
+                      style={{flex:1,padding:"8px 6px",borderRadius:7,border:"none",cursor:"pointer",
+                        fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,textAlign:"center",
+                        background:autoCalc?"#fff":"transparent",color:autoCalc?C.dark:C.muted,
+                        boxShadow:autoCalc?"0 1px 4px rgba(0,0,0,.1)":"none",transition:"all .15s"}}>
+                      ⚡ Auto-estimate
+                    </button>
+                    <button onClick={()=>setAutoCalc(false)}
+                      style={{flex:1,padding:"8px 6px",borderRadius:7,border:"none",cursor:"pointer",
+                        fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,textAlign:"center",
+                        background:!autoCalc?"#fff":"transparent",color:!autoCalc?C.dark:C.muted,
+                        boxShadow:!autoCalc?"0 1px 4px rgba(0,0,0,.1)":"none",transition:"all .15s"}}>
+                      ✏️ Enter manually
+                    </button>
+                  </div>
                   {autoCalc?(()=>{
                     const m=autoMaintCalc();
+                    // Shows estimated maintenance based on property details entered above
                     return(
                       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6}}>
                         {[["Monthly",`₹${m.monthly.toLocaleString()}`,C.dark],
@@ -3989,10 +4236,10 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                       </div>
                     </div>
                   )}
-                </G>
+                </PricerGroup>
               )}
 
-              <LiveEstimate/>
+              <PricerEstimateBar calcEstimate={calcEstimate} calcGST={calcGST} city={city}/>
             </div>
           )}
 
@@ -4070,7 +4317,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                   ))}
                 </>
               )}
-              <LiveEstimate/>
+              <PricerEstimateBar calcEstimate={calcEstimate} calcGST={calcGST} city={city}/>
             </div>
           )}
 
@@ -4131,7 +4378,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                   })}
                 </div>
               </div>
-              <LiveEstimate/>
+              <PricerEstimateBar calcEstimate={calcEstimate} calcGST={calcGST} city={city}/>
             </div>
           )}
 
@@ -4217,7 +4464,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                 📜 <strong>UDS</strong> = your % land ownership. Even in an apartment you co-own a fraction of the land — this shows its future value vs total holding costs.
               </div>
 
-              <G id="uds_land" icon="🌍" title="Land & UDS">
+              <PricerGroup open={openGroups["uds_land"]} onToggle={()=>toggleGroup("uds_land")} icon="🌍" title="Land & UDS">
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                   <div><label style={LS}>Your UDS (%)</label>
                     <input value={udsPercent} onChange={e=>setUdsPercent(e.target.value)} type="number" style={IS} placeholder="e.g. 0.85"/>
@@ -4231,9 +4478,9 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                     Your land share: {(parseFloat(totalLandArea)*parseFloat(udsPercent)/100).toFixed(1)} sqft
                   </div>
                 )}
-              </G>
+              </PricerGroup>
 
-              <G id="uds_loan" icon="🏦" title="Loan Details">
+              <PricerGroup open={openGroups["uds_loan"]} onToggle={()=>toggleGroup("uds_loan")} icon="🏦" title="Loan Details">
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                   <div><label style={LS}>Loan Amount (₹)</label>
                     <input value={loanAmount} onChange={e=>setLoanAmount(e.target.value)} type="number" style={IS} placeholder="e.g. 60,00,000"/>
@@ -4244,19 +4491,27 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                 </div>
                 <div>
                   <label style={LS}>Interest Rate — <strong style={{color:C.dark}}>{loanInterestRate}%</strong></label>
-                  <input type="range" min={6} max={14} step={0.1} value={loanInterestRate} onChange={e=>setLoanInterestRate(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                  <input type="range" min={6} max={14} step={0.1} value={loanInterestRate} onChange={e=>setLoanInterestRate(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
                   <div style={{display:"flex",justifyContent:"space-between",fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,marginTop:2}}><span>6%</span><span>14%</span></div>
                 </div>
                 <div>
                   <label style={LS}>Tenure — <strong style={{color:C.dark}}>{loanTenureYears} yrs</strong></label>
-                  <input type="range" min={5} max={30} value={loanTenureYears} onChange={e=>setLoanTenureYears(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                  <input type="range" min={5} max={30} value={loanTenureYears} onChange={e=>setLoanTenureYears(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
                 </div>
-              </G>
+              </PricerGroup>
 
-              <G id="uds_costs" icon="💸" title="Annual Holding Costs">
+              <PricerGroup open={openGroups["uds_costs"]} onToggle={()=>toggleGroup("uds_costs")} icon="💸" title="Annual Holding Costs">
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                  <div><label style={LS}>Maintenance (₹/yr)</label>
-                    <input value={annualMaintenance} onChange={e=>setAnnualMaintenance(e.target.value)} type="number" style={IS} placeholder="e.g. 42,000"/>
+                  <div><label style={LS}>Maintenance (₹/yr)
+                    {maintenanceCharge&&!annualMaintenance&&<span style={{color:C.blue,fontSize:9,marginLeft:4}}>
+                      auto-filled from Property tab</span>}
+                  </label>
+                    <input value={annualMaintenance}
+                      onChange={e=>setAnnualMaintenance(e.target.value)}
+                      type="number" style={IS}
+                      placeholder={maintenanceCharge
+                        ? `₹${Math.round(parseFloat(maintenanceCharge)*(maintenanceType==="per sqft/month"?(+area||1200)*12:maintenanceType==="quarterly"?4:maintenanceType==="annual"?1:12)).toLocaleString()} (from Property tab)`
+                        : "e.g. 42,000"}/>
                   </div>
                   <div><label style={LS}>Repairs (₹/yr)</label>
                     <input value={annualRepairs} onChange={e=>setAnnualRepairs(e.target.value)} type="number" style={IS} placeholder="e.g. 15,000"/>
@@ -4266,10 +4521,10 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                   </div>
                   <div>
                     <label style={LS}>Land Appreciation — <strong style={{color:C.dark}}>{landAppreciationRate}%/yr</strong></label>
-                    <input type="range" min={3} max={20} value={landAppreciationRate} onChange={e=>setLandAppreciationRate(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue}}/>
+                    <input type="range" min={3} max={20} value={landAppreciationRate} onChange={e=>setLandAppreciationRate(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
                   </div>
                 </div>
-              </G>
+              </PricerGroup>
 
               {/* UDS Results */}
               {udsPercent&&totalLandArea&&loanAmount&&(()=>{
@@ -4280,7 +4535,16 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                 const totalPaid=emi*n;
                 const totalInterest=totalPaid-P;
                 const dp=parseFloat(downPayment)||0;
-                const maintTotal=(parseFloat(annualMaintenance)||0)*loanTenureYears;
+                // Use manual maintenance charge from Property tab if annualMaintenance not set
+                const effectiveAnnualMaint = parseFloat(annualMaintenance) > 0
+                  ? parseFloat(annualMaintenance)
+                  : maintenanceCharge
+                    ? (maintenanceType==="per sqft/month" ? parseFloat(maintenanceCharge)*(+area||1200)*12
+                      : maintenanceType==="quarterly"    ? parseFloat(maintenanceCharge)*4
+                      : maintenanceType==="annual"       ? parseFloat(maintenanceCharge)
+                      : parseFloat(maintenanceCharge)*12) // flat monthly × 12
+                    : autoMaintCalc().annual;
+                const maintTotal=effectiveAnnualMaint*loanTenureYears;
                 const repairsTotal=(parseFloat(annualRepairs)||0)*loanTenureYears;
                 const taxTotal=(parseFloat(propertyTaxAnnual)||0)*loanTenureYears;
                 const totalSpent=totalPaid+dp+maintTotal+repairsTotal+taxTotal;
@@ -4402,6 +4666,9 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
                   <div style={{background:vc,color:"#fff",borderRadius:8,padding:"5px 14px",fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13}}>{result.accuracy_verdict}</div>
                   <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#94A3B8"}}>
                     {result.price_trend==="Rising"?"📈":result.price_trend==="Declining"?"📉":"➡️"} {result.price_trend} · {result.yoy_appreciation_pct}% YoY
+                    {result._premium&&<span style={{fontSize:9,color:"#94A3B8",marginLeft:6}}>
+                      +₹{(result._premium/1000).toFixed(1)}k/sqft area premium
+                    </span>}
                   </div>
                   <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#94A3B8"}}>Best for: <strong style={{color:"#F8FAFB"}}>{result.best_for}</strong></div>
                 </div>
