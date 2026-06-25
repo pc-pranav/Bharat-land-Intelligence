@@ -1,4 +1,4 @@
-import React,{ useState, useEffect, useRef, useMemo, Component } from "react";
+import { useState, useEffect, useRef, useMemo, Component } from "react";
 import GoogleMapView from "./components/GoogleMapView";
 
 // API endpoint: in this Claude.ai artifact preview, call Anthropic directly.
@@ -2250,180 +2250,6 @@ const IS={width:"100%",border:`1px solid ${C.border}`,borderRadius:8,padding:"8p
 // ── RERA Search Component ──────────────────────────────────────────────────
 // Searches the ETL-built rera_index.json by project name OR company name.
 // No registration number needed. Links directly to official state portal.
-function RERASearchTab() {
-  const [q, setQ] = useState("");
-  const [results, setResults] = useState([]);
-  const [allProjects, setAllProjects] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [dataSource, setDataSource] = useState("loading");
-
-  useEffect(() => {
-    // Load RERA index from ETL output
-    fetch('/data/rera_index.json')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (data?.projects?.length > 0) {
-          setAllProjects(data.projects);
-          setDataSource(`${data.projects.length} projects · ${data.states_covered?.length || 0} states`);
-        } else {
-          setDataSource("unavailable");
-        }
-        setLoading(false);
-      })
-      .catch(() => {
-        setDataSource("unavailable");
-        setLoading(false);
-      });
-  }, []);
-
-  // Fuzzy search — matches on project name, company name, or city
-  // Uses pre-tokenised search_tokens from ETL for fast client-side matching
-  const search = (query) => {
-    setQ(query);
-    if (!query.trim() || query.length < 2) { setResults([]); return; }
-    const tokens = query.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(' ').filter(t => t.length >= 2);
-    const scored = allProjects.map(p => {
-      const projectTokens = p.search_tokens || [];
-      const displayText = (p.search_display || '').toLowerCase();
-      // Score: how many query tokens match?
-      const matchCount = tokens.filter(t =>
-        projectTokens.some(pt => pt.includes(t)) || displayText.includes(t)
-      ).length;
-      return { ...p, _score: matchCount };
-    }).filter(p => p._score > 0)
-      .sort((a, b) => b._score - a._score)
-      .slice(0, 12);
-    setResults(scored);
-  };
-
-  const statusColor = (s) => ({
-    "Completed": "#15803D", "Ongoing": "#1D4ED8",
-    "Lapsed": "#C84B31", "Revoked": "#C84B31",
-  })[s] || C.muted;
-
-  return (
-    <div style={{display:"flex",flexDirection:"column",gap:14}}>
-      {/* Header */}
-      <div style={{background:C.navy,borderRadius:12,padding:"14px 16px"}}>
-        <div style={{color:"#F8FAFB",fontFamily:"serif",fontSize:16,marginBottom:4}}>
-          🔍 RERA Project Search
-        </div>
-        <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:11,lineHeight:1.5}}>
-          Search by project name or builder — no registration number needed.
-          Links directly to official state RERA portals.
-        </div>
-      </div>
-
-      {/* Search input */}
-      <div style={{display:"flex",gap:8}}>
-        <input
-          value={q}
-          onChange={e => search(e.target.value)}
-          placeholder="e.g. Prestige, Godrej, Lodha Palava, Brigade..."
-          style={{flex:1,border:"1.5px solid "+C.border,borderRadius:9,padding:"10px 13px",
-            fontFamily:"Inter,sans-serif",fontSize:13,color:C.dark,outline:"none"}}
-        />
-        {q && <button onClick={()=>{setQ("");setResults([]);}}
-          style={{background:"none",border:"1px solid "+C.border,borderRadius:9,
-            padding:"0 12px",color:C.muted,cursor:"pointer",fontFamily:"Inter,sans-serif",fontSize:12}}>
-          Clear
-        </button>}
-      </div>
-
-      {/* Data source badge */}
-      <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,
-        display:"flex",alignItems:"center",gap:6}}>
-        {loading ? "Loading RERA database..." :
-         dataSource === "unavailable"
-           ? "⚠️ RERA index not loaded — run etl/02_ingest_infrastructure.py and deploy /data/rera_index.json"
-           : `📋 ${dataSource} · Powered by ETL pipeline`}
-      </div>
-
-      {/* Results */}
-      {q.length >= 2 && !loading && results.length === 0 && (
-        <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.muted,
-          padding:"14px",background:C.bg,borderRadius:9,textAlign:"center"}}>
-          No RERA projects found matching "{q}".
-          <br/>
-          <span style={{fontSize:11}}>
-            Try the builder name (e.g. "Prestige", "Sobha") or part of the project name.
-            <br/>
-            Or{" "}
-            <a href={`https://www.google.com/search?q=RERA+${encodeURIComponent(q)}+site:rera.karnataka.gov.in+OR+site:maharera.mahaonline.gov.in+OR+site:rera.telangana.gov.in`}
-              target="_blank" rel="noopener noreferrer"
-              style={{color:C.blue}}>search across all state portals →</a>
-          </span>
-        </div>
-      )}
-
-      {results.map((p, i) => (
-        <div key={i} style={{background:"#fff",border:"1px solid "+C.border,
-          borderRadius:10,padding:"12px 14px",display:"flex",flexDirection:"column",gap:6}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
-            <div style={{flex:1}}>
-              <div style={{fontFamily:"serif",fontSize:14,color:C.dark,lineHeight:1.3}}>
-                {p.project_name}
-              </div>
-              <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,marginTop:2}}>
-                {p.company_name}
-              </div>
-            </div>
-            <span style={{flexShrink:0,fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:600,
-              padding:"2px 8px",borderRadius:10,
-              background: p.status==="Completed"?"#F0FDF4":p.status==="Ongoing"?"#EFF6FF":"#FFF7F5",
-              color:statusColor(p.status)}}>
-              {p.status}
-            </span>
-          </div>
-
-          <div style={{display:"flex",gap:12,fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted}}>
-            <span>📍 {p.city}{p.district && p.district !== p.city ? `, ${p.district}` : ""}, {p.state}</span>
-            <span>🏗️ {p.type}</span>
-          </div>
-
-          {p.rera_id && p.rera_id !== "—" && (
-            <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,
-              background:C.bg,borderRadius:6,padding:"4px 8px"}}>
-              RERA ID: <span style={{fontFamily:"monospace",color:C.dark}}>{p.rera_id}</span>
-            </div>
-          )}
-
-          <div style={{display:"flex",gap:8,marginTop:2}}>
-            <a href={p.direct_url} target="_blank" rel="noopener noreferrer"
-              style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,
-                color:"#fff",background:C.blue,borderRadius:7,padding:"5px 12px",
-                textDecoration:"none"}}>
-              View on {p.state} RERA →
-            </a>
-            {p.portal_url && (
-              <a href={p.portal_url} target="_blank" rel="noopener noreferrer"
-                style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.blue,
-                  borderRadius:7,padding:"5px 12px",border:"1px solid "+C.blue,
-                  textDecoration:"none"}}>
-                State portal
-              </a>
-            )}
-          </div>
-        </div>
-      ))}
-
-      {/* Help text when idle */}
-      {!q && !loading && dataSource !== "unavailable" && (
-        <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,
-          background:C.bg,borderRadius:9,padding:"12px 14px",lineHeight:1.7}}>
-          <strong style={{color:C.dark}}>How to search:</strong><br/>
-          • Builder name — "Prestige", "Godrej Properties", "Sobha"<br/>
-          • Project name — "Palava", "Utopia", "Woodland"<br/>
-          • Partial match — "brigade" finds all Brigade projects<br/>
-          • City — combined with builder: "Pune Godrej"<br/><br/>
-          <strong style={{color:C.dark}}>State portals covered:</strong>{" "}
-          Karnataka · Maharashtra · Telangana · Tamil Nadu · Gujarat
-        </div>
-      )}
-    </div>
-  );
-}
-
 function ScreenerTab(){
   const [f,setF]=useState({city:"Bengaluru",radius:100,minCagr:12,maxPrice:5000,minInfra:70,maxRisk:45});
   const [results,setResults]=useState(null);
@@ -3408,7 +3234,29 @@ function PricerTab(){
   const [reraQuery, setReraQuery]     = useState("");
   const [reraResults, setReraResults] = useState([]);
   const [reraProject, setReraProject] = useState(null);
-  const [reraProjects, setReraProjects] = useState([]);
+  const [reraProjects, setReraProjects] = useState([
+    // Seed data — upgraded silently from /data/rera_index.json when available
+    {project_name:"Prestige Lakeside Habitat",company_name:"Prestige Group",city:"Bengaluru",state:"Karnataka",status:"Completed",rera_id:"PRM/KA/RERA/1251/446/PR/180831/001703",direct_url:"https://rera.karnataka.gov.in",search_tokens:["prestige","lakeside","habitat","bengaluru"]},
+    {project_name:"Brigade Utopia",company_name:"Brigade Enterprises",city:"Bengaluru",state:"Karnataka",status:"Under Construction",rera_id:"PRM/KA/RERA/1251/309/PR/180607/001480",direct_url:"https://rera.karnataka.gov.in",search_tokens:["brigade","utopia","bengaluru","whitefield"]},
+    {project_name:"Sobha Dream Acres",company_name:"Sobha Limited",city:"Bengaluru",state:"Karnataka",status:"Under Construction",rera_id:"PRM/KA/RERA/1251/446/PR/170927/001279",direct_url:"https://rera.karnataka.gov.in",search_tokens:["sobha","dream","acres","bengaluru","panathur"]},
+    {project_name:"Godrej Splendour",company_name:"Godrej Properties",city:"Bengaluru",state:"Karnataka",status:"Completed",rera_id:"PRM/KA/RERA/1251/446/PR/171229/001337",direct_url:"https://rera.karnataka.gov.in",search_tokens:["godrej","splendour","bengaluru","whitefield"]},
+    {project_name:"Provident Welworth City",company_name:"Provident Housing",city:"Bengaluru",state:"Karnataka",status:"Under Construction",rera_id:"PRM/KA/RERA/1251/310/PR/190101/002025",direct_url:"https://rera.karnataka.gov.in",search_tokens:["provident","welworth","city","bengaluru","doddaballapur"]},
+    {project_name:"Lodha Belmondo",company_name:"Lodha Group",city:"Pune",state:"Maharashtra",status:"Completed",rera_id:"P52100000286",direct_url:"https://maharerait.mahaonline.gov.in",search_tokens:["lodha","belmondo","pune","gahunje"]},
+    {project_name:"Lodha Palava",company_name:"Lodha Group",city:"Mumbai",state:"Maharashtra",status:"Under Construction",rera_id:"P51700020918",direct_url:"https://maharerait.mahaonline.gov.in",search_tokens:["lodha","palava","mumbai","dombivali"]},
+    {project_name:"Mahindra Happinest",company_name:"Mahindra Lifespaces",city:"Mumbai",state:"Maharashtra",status:"Completed",rera_id:"P51800006258",direct_url:"https://maharerait.mahaonline.gov.in",search_tokens:["mahindra","happinest","mumbai","kalyan"]},
+    {project_name:"TATA Avenida",company_name:"Tata Housing",city:"Kolkata",state:"West Bengal",status:"Completed",rera_id:"HIRA/P/KOL/2018/000137",direct_url:"https://hira.wb.gov.in",search_tokens:["tata","avenida","kolkata","rajarhat"]},
+    {project_name:"Puravankara Zenium",company_name:"Puravankara",city:"Bengaluru",state:"Karnataka",status:"Under Construction",rera_id:"PRM/KA/RERA/1251/446/PR/200714/003195",direct_url:"https://rera.karnataka.gov.in",search_tokens:["puravankara","zenium","bengaluru","hosahalli"]},
+    {project_name:"Shapoorji Pallonji Joyville",company_name:"Shapoorji Pallonji",city:"Pune",state:"Maharashtra",status:"Under Construction",rera_id:"P52100030574",direct_url:"https://maharerait.mahaonline.gov.in",search_tokens:["shapoorji","pallonji","joyville","pune","hinjewadi"]},
+    {project_name:"Embassy Grove",company_name:"Embassy Group",city:"Bengaluru",state:"Karnataka",status:"Completed",rera_id:"PRM/KA/RERA/1251/446/PR/180212/001527",direct_url:"https://rera.karnataka.gov.in",search_tokens:["embassy","grove","bengaluru","devanahalli"]},
+    {project_name:"Mana Dale",company_name:"Mana Projects",city:"Bengaluru",state:"Karnataka",status:"Under Construction",rera_id:"PRM/KA/RERA/1251/446/PR/210324/003987",direct_url:"https://rera.karnataka.gov.in",search_tokens:["mana","dale","bengaluru","sarjapur"]},
+    {project_name:"DLF The Camellias",company_name:"DLF Limited",city:"Gurugram",state:"Haryana",status:"Completed",rera_id:"RC/REP/HARERA/GGM/2018/12",direct_url:"https://haryanarera.gov.in",search_tokens:["dlf","camellias","gurugram","golf course"]},
+    {project_name:"Sobha City",company_name:"Sobha Limited",city:"Gurugram",state:"Haryana",status:"Completed",rera_id:"RC/REP/HARERA/GGM/2019/45",direct_url:"https://haryanarera.gov.in",search_tokens:["sobha","city","gurugram","sector 108"]},
+    {project_name:"Prestige White Meadows",company_name:"Prestige Group",city:"Bengaluru",state:"Karnataka",status:"Completed",rera_id:"PRM/KA/RERA/1251/446/PR/170927/001271",direct_url:"https://rera.karnataka.gov.in",search_tokens:["prestige","white","meadows","bengaluru","whitefield"]},
+    {project_name:"Godrej Air",company_name:"Godrej Properties",city:"Gurugram",state:"Haryana",status:"Under Construction",rera_id:"RC/REP/HARERA/GGM/2022/88",direct_url:"https://haryanarera.gov.in",search_tokens:["godrej","air","gurugram","sector 85"]},
+    {project_name:"Mahindra Eden",company_name:"Mahindra Lifespaces",city:"Bengaluru",state:"Karnataka",status:"Under Construction",rera_id:"PRM/KA/RERA/1251/446/PR/220618/004892",direct_url:"https://rera.karnataka.gov.in",search_tokens:["mahindra","eden","bengaluru","bannerghatta"]},
+    {project_name:"Brigade Cornerstone Utopia",company_name:"Brigade Enterprises",city:"Bengaluru",state:"Karnataka",status:"Under Construction",rera_id:"PRM/KA/RERA/1251/309/PR/210101/003712",direct_url:"https://rera.karnataka.gov.in",search_tokens:["brigade","cornerstone","utopia","bengaluru","yelahanka"]},
+    {project_name:"Hiranandani Estate",company_name:"Hiranandani Group",city:"Mumbai",state:"Maharashtra",status:"Completed",rera_id:"P51700014310",direct_url:"https://maharerait.mahaonline.gov.in",search_tokens:["hiranandani","estate","mumbai","thane","powai"]},
+  ]);
   const [reraLoaded, setReraLoaded]   = useState(false);
 
   // ── UI state ───────────────────────────────────────────────────────────────
@@ -3424,11 +3272,21 @@ function PricerTab(){
   const isPenthouse = propType.toLowerCase().includes("penthouse");
 
   // ── Load RERA index ────────────────────────────────────────────────────────
+  const [reraDataSource, setReraDataSource] = useState("loading");
+
   useEffect(() => {
     fetch('/data/rera_index.json')
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if(d?.projects) { setReraProjects(d.projects); setReraLoaded(true); }})
-      .catch(() => {});
+      .then(d => {
+        if(d?.projects?.length > 0) {
+          setReraProjects(d.projects);
+          setReraLoaded(true);
+          setReraDataSource(`${d.projects.length} projects · ${d.states_covered?.length||0} states`);
+        } else {
+          setReraDataSource("seed");
+        }
+      })
+      .catch(() => { setReraDataSource("seed"); });
   }, []);
 
   // ── RERA search ────────────────────────────────────────────────────────────
@@ -3807,43 +3665,106 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
       ══════════════════════════════════════════════════════════════════ */}
       {mode==="quick" && (<>
 
-        {/* RERA search hero */}
-        <div style={{background:"linear-gradient(160deg,#0F1B2D,#1E3A5F)",borderRadius:14,padding:15}}>
-          <div style={{color:"#F8FAFB",fontFamily:"serif",fontSize:15,marginBottom:3}}>Search by project or builder</div>
-          <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:11,marginBottom:11,lineHeight:1.4}}>
-            {reraLoaded?"RERA status pulled automatically — no reg number needed":"Enter locality or project name to price"}
-          </div>
-          <div style={{display:"flex",gap:6,position:"relative"}}>
-            <input value={reraQuery} onChange={e=>searchRERA(e.target.value)}
-              placeholder="Prestige, Godrej, Brigade Utopia…"
-              style={{flex:1,background:"#fff",border:"none",borderRadius:9,padding:"10px 12px",
-                fontSize:13,fontFamily:"Inter,sans-serif",color:"#1E293B",outline:"none"}}/>
-            {reraQuery&&<button onClick={()=>{setReraQuery("");setReraResults([]);setReraProject(null);}}
-              style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",
-                background:"none",border:"none",color:"#94A3B8",cursor:"pointer",fontSize:16}}>×</button>}
-          </div>
-          {reraResults.length>0&&(
-            <div style={{background:"#fff",borderRadius:9,marginTop:6,overflow:"hidden",
-              boxShadow:"0 4px 16px rgba(0,0,0,.2)"}}>
-              {reraResults.map((p,i)=>(
-                <div key={i} onClick={()=>selectRERA(p)}
-                  style={{padding:"10px 13px",borderBottom:i<reraResults.length-1?"1px solid #F1F5F9":"none",cursor:"pointer"}}>
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:"#1E293B"}}>{p.project_name}</div>
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#64748B"}}>{p.company_name} · {p.city}</div>
-                </div>
-              ))}
+        {/* ── RERA Project Search — full experience merged into Quick Check ── */}
+        <div style={{background:"linear-gradient(160deg,#0F1B2D,#1E3A5F)",borderRadius:14,padding:15,display:"flex",flexDirection:"column",gap:10}}>
+          <div>
+            <div style={{color:"#F8FAFB",fontFamily:"serif",fontSize:15,marginBottom:2}}>
+              🔍 RERA Project Search
             </div>
-          )}
-          {!reraLoaded&&(
-            <div style={{display:"flex",gap:5,marginTop:8,flexWrap:"wrap"}}>
-              {["Prestige","Godrej","Brigade","Sobha","Lodha"].map(s=>(
+            <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:11,lineHeight:1.4}}>
+              {reraDataSource==="loading"?"Loading RERA database…":
+               reraDataSource==="seed"?"Seed data · Run ETL for full database":
+               `📋 ${reraDataSource} · No reg number needed`}
+            </div>
+          </div>
+
+          {/* Search input */}
+          <div style={{position:"relative"}}>
+            <input value={reraQuery} onChange={e=>searchRERA(e.target.value)}
+              placeholder="Builder or project — Prestige, Godrej, Brigade Utopia…"
+              style={{width:"100%",background:"#fff",border:"none",borderRadius:9,
+                padding:"10px 36px 10px 12px",fontSize:13,fontFamily:"Inter,sans-serif",
+                color:"#1E293B",outline:"none"}}/>
+            {reraQuery&&<button onClick={()=>{setReraQuery("");setReraResults([]);setReraProject(null);}}
+              style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",
+                background:"none",border:"none",color:"#94A3B8",cursor:"pointer",fontSize:18,lineHeight:1}}>×</button>}
+          </div>
+
+          {/* Builder chips when idle */}
+          {!reraQuery&&(
+            <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+              {["Prestige","Godrej","Brigade","Sobha","Lodha","Puravankara","Mahindra","DLF"].map(s=>(
                 <span key={s} onClick={()=>searchRERA(s)}
                   style={{background:"rgba(255,255,255,0.12)",color:"#CBD5E1",fontSize:10,
-                    padding:"3px 9px",borderRadius:12,cursor:"pointer",
-                    border:"1px solid rgba(255,255,255,0.15)"}}>
+                    padding:"4px 10px",borderRadius:12,cursor:"pointer",
+                    border:"1px solid rgba(255,255,255,0.18)",fontFamily:"Inter,sans-serif"}}>
                   {s}
                 </span>
               ))}
+            </div>
+          )}
+
+          {/* No results message */}
+          {reraQuery.length>=2&&reraResults.length===0&&(
+            <div style={{background:"rgba(255,255,255,0.08)",borderRadius:8,padding:"10px 12px",
+              fontFamily:"Inter,sans-serif",fontSize:11,color:"#94A3B8",lineHeight:1.6}}>
+              No matches for "{reraQuery}" — try builder name (Prestige, Sobha) or project name.
+              {" "}<a href={`https://www.google.com/search?q=RERA+${encodeURIComponent(reraQuery)}`}
+                target="_blank" rel="noopener noreferrer" style={{color:"#60A5FA"}}>Search Google →</a>
+            </div>
+          )}
+
+          {/* Result cards — full detail, same as RERASearchTab */}
+          {reraResults.length>0&&(
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {reraResults.map((p,i)=>{
+                const statusBg  = p.status==="Completed"?"#F0FDF4":p.status==="Ongoing"?"#EFF6FF":"#FFF7F5";
+                const statusCol = p.status==="Completed"?"#15803D":p.status==="Ongoing"?"#1D4ED8":"#C84B31";
+                return(
+                  <div key={i} style={{background:"#fff",borderRadius:10,padding:"12px 14px",
+                    display:"flex",flexDirection:"column",gap:7,cursor:"pointer"}}
+                    onClick={()=>selectRERA(p)}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                      <div style={{flex:1}}>
+                        <div style={{fontFamily:"serif",fontSize:14,color:"#1E293B",lineHeight:1.3}}>{p.project_name}</div>
+                        <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#64748B",marginTop:2}}>{p.company_name}</div>
+                      </div>
+                      <span style={{flexShrink:0,fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:600,
+                        padding:"2px 8px",borderRadius:10,background:statusBg,color:statusCol}}>
+                        {p.status||"—"}
+                      </span>
+                    </div>
+                    <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#64748B"}}>
+                      📍 {p.city}{p.district&&p.district!==p.city?`, ${p.district}`:""}{p.state?`, ${p.state}`:""}
+                    </div>
+                    {p.rera_id&&p.rera_id!=="—"&&(
+                      <div style={{fontFamily:"monospace",fontSize:10,color:"#94A3B8",
+                        background:"#F8FAFB",borderRadius:5,padding:"3px 7px"}}>
+                        {p.rera_id}
+                      </div>
+                    )}
+                    <div style={{display:"flex",gap:7,alignItems:"center"}}>
+                      <a href={p.direct_url} target="_blank" rel="noopener noreferrer"
+                        onClick={e=>e.stopPropagation()}
+                        style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,color:"#fff",
+                          background:"#2563EB",borderRadius:7,padding:"5px 11px",textDecoration:"none"}}>
+                        View on {p.state} RERA →
+                      </a>
+                      <span style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#94A3B8"}}>
+                        tap card to price this project
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Help text when idle */}
+          {!reraQuery&&(
+            <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#64748B",lineHeight:1.7}}>
+              Search by builder or project name · Tap a result to auto-fill the pricer below ·
+              Links to official state RERA portals
             </div>
           )}
         </div>
@@ -4948,6 +4869,7 @@ function AppInner(){
         {tab==="analyze"&&<AnalyzeTab key={analyzeQuery} initialQuery={analyzeQuery} onClear={()=>{setAnalyzeQuery("");setTab("home");}}/>}
         {tab==="screen"&&<ScreenerTab/>}
         {tab==="pricer"&&<PricerTab/>}
+        
       </div>
       <div style={{textAlign:"center",padding:"10px",fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,borderTop:`1px solid ${C.border}`}}>
         AI-generated analysis · Not financial advice · Verify before investing · nammajaga.com

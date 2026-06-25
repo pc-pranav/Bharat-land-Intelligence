@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-23T15:52:22.119996Z",
+  "generated_at": "2026-06-24T14:39:02.979522+00:00",
   "total_projects": 20,
   "states_covered": [
     "Gujarat",
@@ -26,11 +26,11 @@
         "habitat",
         "ltd",
         "lakeside",
-        "prestige",
         "projects",
+        "prestige",
         "estates"
       ],
-      "search_display": "Prestige Lakeside Habitat Â· Prestige Estates Projects Ltd Â· Bengaluru",
+      "search_display": "Prestige Lakeside Habitat · Prestige Estates Projects Ltd · Bengaluru",
       "direct_url": "https://rera.karnataka.gov.in/viewProjectSearch?projectName=Prestige+Lakeside"
     },
     {
@@ -47,12 +47,12 @@
       "portal_url": "https://rera.karnataka.gov.in",
       "search_url": "https://rera.karnataka.gov.in/viewProjectSearch?projectName=Godrej+Woodland",
       "search_tokens": [
+        "ltd",
         "properties",
         "woodland",
-        "godrej",
-        "ltd"
+        "godrej"
       ],
-      "search_display": "Godrej Woodland Â· Godrej Properties Ltd Â· Bengaluru",
+      "search_display": "Godrej Woodland · Godrej Properties Ltd · Bengaluru",
       "direct_url": "https://rera.karnataka.gov.in/viewProjectSearch?projectName=Godrej+Woodland"
     },
     {
@@ -69,12 +69,12 @@
       "portal_url": "https://rera.karnataka.gov.in",
       "search_url": "https://rera.karnataka.gov.in/viewProjectSearch?projectName=Brigade+Utopia",
       "search_tokens": [
-        "enterprises",
+        "ltd",
         "brigade",
         "utopia",
-        "ltd"
+        "enterprises"
       ],
-      "search_display": "Brigade Utopia Â· Brigade Enterprises Ltd Â· Bengaluru",
+      "search_display": "Brigade Utopia · Brigade Enterprises Ltd · Bengaluru",
       "direct_url": "https://rera.karnataka.gov.in/viewProjectSearch?projectName=Brigade+Utopia"
     },
     {
@@ -91,12 +91,12 @@
       "portal_url": "https://rera.karnataka.gov.in",
       "search_url": "https://rera.karnataka.gov.in/viewProjectSearch?projectName=Sobha+Tropical",
       "search_tokens": [
+        "ltd",
         "sobha",
         "greens",
-        "tropical",
-        "ltd"
+        "tropical"
       ],
-      "search_display": "Sobha Tropical Greens Â· Sobha Ltd Â· Bengaluru",
+      "search_display": "Sobha Tropical Greens · Sobha Ltd · Bengaluru",
       "direct_url": "https://rera.karnataka.gov.in/viewProjectSearch?projectName=Sobha+Tropical"
     },
     {
@@ -114,11 +114,11 @@
       "search_url": "https://rera.karnataka.gov.in/viewProjectSearch?projectName=Embassy+Springs",
       "search_tokens": [
         "embassy",
-        "developments",
         "springs",
-        "property"
+        "property",
+        "developments"
       ],
-      "search_display": "Embassy Springs Â· Embassy Property Developments Â· Bengaluru",
+      "search_display": "Embassy Springs · Embassy Property Developments · Bengaluru",
       "direct_url": "https://rera.karnataka.gov.in/viewProjectSearch?projectName=Embassy+Springs"
     },
     {
@@ -135,13 +135,13 @@
       "portal_url": "https://rera.karnataka.gov.in",
       "search_url": "https://rera.karnataka.gov.in/viewProjectSearch?projectName=Salarpuria+Knowledge",
       "search_tokens": [
-        "knowledge",
-        "sattva",
-        "group",
         "city",
-        "salarpuria"
+        "salarpuria",
+        "knowledge",
+        "group",
+        "sattva"
       ],
-      "search_display": "Salarpuria Sattva Knowledge City Â· Salarpuria Sattva Group Â· Bengaluru",
+      "search_display": "Salarpuria Sattva Knowledge City · Salarpuria Sattva Group · Bengaluru",
       "direct_url": "https://rera.karnataka.gov.in/viewProjectSearch?projectName=Salarpuria+Knowledge"
     },
     {
@@ -158,13 +158,13 @@
       "portal_url": "https://rera.karnataka.gov.in",
       "search_url": "https://rera.karnataka.gov.in/viewProjectSearch?projectName=Mana+Dale",
       "search_tokens": [
+        "dale",
         "mana",
         "ltd",
-        "dale",
         "projects",
         "pvt"
       ],
-      "search_display": "Mana Dale Â· Mana Projects Pvt Ltd Â· Bengaluru",
+      "search_display": "Mana Dale · Mana Projects Pvt Ltd · Bengaluru",
       "direct_url": "https://rera.karnataka.gov.in/viewProjectSearch?projectName=Mana+Dale"
     },
     {
@@ -182,11 +182,11 @@
       "search_url": "https://rera.karnataka.gov.in/viewProjectSearch?projectName=Adarsh+Palm",
       "search_tokens": [
         "adarsh",
-        "palm",
         "retreat",
+        "palm",
         "developers"
       ],
-      "search_display": "Adarsh Palm Retreat Â· Adarsh Developers Â· Bengaluru",
+      "search_display": "Adarsh Palm Retreat · Adarsh Developers · Bengaluru",
       "direct_url": "https://rera.karnataka.gov.in/viewProjectSearch?projectName=Adarsh+Palm"
     },
     {
@@ -203,14 +203,14 @@
       "portal_url": "https://maharera.mahaonline.gov.in",
       "search_url": "https://maharera.mahaonline.gov.in/Promotor/PromotorSearch?ProjectName=Lodha+Palava",
       "search_tokens": [
-        "palava",
-        "ltd",
-        "city",
         "lodha",
         "developers",
-        "macrotech"
+        "city",
+        "palava",
+        "macrotech",
+        "ltd"
       ],
-      "search_display": "Lodha Palava City Â· Macrotech Developers Ltd (Lodha) Â· Thane",
+      "search_display": "Lodha Palava City · Macrotech Developers Ltd (Lodha) · Thane",
       "direct_url": "https://maharera.mahaonline.gov.in/Promotor/PromotorSearch?ProjectName=Lodha+Palava"
     },
     {
@@ -227,12 +227,12 @@
       "portal_url": "https://maharera.mahaonline.gov.in",
       "search_url": "https://maharera.mahaonline.gov.in/Promotor/PromotorSearch?ProjectName=Hiranandani+Fortune",
       "search_tokens": [
-        "city",
-        "communities",
         "hiranandani",
-        "fortune"
+        "city",
+        "fortune",
+        "communities"
       ],
-      "search_display": "Hiranandani Fortune City Â· Hiranandani Communities Â· Navi Mumbai",
+      "search_display": "Hiranandani Fortune City · Hiranandani Communities · Navi Mumbai",
       "direct_url": "https://maharera.mahaonline.gov.in/Promotor/PromotorSearch?ProjectName=Hiranandani+Fortune"
     },
     {
@@ -249,12 +249,12 @@
       "portal_url": "https://maharera.mahaonline.gov.in",
       "search_url": "https://maharera.mahaonline.gov.in/Promotor/PromotorSearch?ProjectName=Godrej+Prana",
       "search_tokens": [
+        "ltd",
         "properties",
         "prana",
-        "godrej",
-        "ltd"
+        "godrej"
       ],
-      "search_display": "Godrej Prana Â· Godrej Properties Ltd Â· Pune",
+      "search_display": "Godrej Prana · Godrej Properties Ltd · Pune",
       "direct_url": "https://maharera.mahaonline.gov.in/Promotor/PromotorSearch?ProjectName=Godrej+Prana"
     },
     {
@@ -271,11 +271,11 @@
       "portal_url": "https://maharera.mahaonline.gov.in",
       "search_url": "https://maharera.mahaonline.gov.in/Promotor/PromotorSearch?ProjectName=VTP+Purvanchal",
       "search_tokens": [
+        "realty",
         "purvanchal",
-        "vtp",
-        "realty"
+        "vtp"
       ],
-      "search_display": "VTP Purvanchal Â· VTP Realty Â· Pune",
+      "search_display": "VTP Purvanchal · VTP Realty · Pune",
       "direct_url": "https://maharera.mahaonline.gov.in/Promotor/PromotorSearch?ProjectName=VTP+Purvanchal"
     },
     {
@@ -292,12 +292,12 @@
       "portal_url": "https://maharera.mahaonline.gov.in",
       "search_url": "https://maharera.mahaonline.gov.in/Promotor/PromotorSearch?ProjectName=Oberoi+Elysian",
       "search_tokens": [
-        "ltd",
         "realty",
+        "oberoi",
         "elysian",
-        "oberoi"
+        "ltd"
       ],
-      "search_display": "Oberoi Elysian Â· Oberoi Realty Ltd Â· Mumbai",
+      "search_display": "Oberoi Elysian · Oberoi Realty Ltd · Mumbai",
       "direct_url": "https://maharera.mahaonline.gov.in/Promotor/PromotorSearch?ProjectName=Oberoi+Elysian"
     },
     {
@@ -314,14 +314,14 @@
       "portal_url": "https://rera.telangana.gov.in",
       "search_url": "https://rera.telangana.gov.in/RERASearch?search=Prestige+High+Fields",
       "search_tokens": [
-        "fields",
         "ltd",
-        "high",
-        "prestige",
         "projects",
+        "prestige",
+        "high",
+        "fields",
         "estates"
       ],
-      "search_display": "Prestige High Fields Â· Prestige Estates Projects Ltd Â· Hyderabad",
+      "search_display": "Prestige High Fields · Prestige Estates Projects Ltd · Hyderabad",
       "direct_url": "https://rera.telangana.gov.in/RERASearch?search=Prestige+High+Fields"
     },
     {
@@ -338,11 +338,11 @@
       "portal_url": "https://rera.telangana.gov.in",
       "search_url": "https://rera.telangana.gov.in/RERASearch?search=My+Home+Tridasa",
       "search_tokens": [
-        "home",
         "constructions",
+        "home",
         "tridasa"
       ],
-      "search_display": "My Home Tridasa Â· My Home Constructions Â· Hyderabad",
+      "search_display": "My Home Tridasa · My Home Constructions · Hyderabad",
       "direct_url": "https://rera.telangana.gov.in/RERASearch?search=My+Home+Tridasa"
     },
     {
@@ -359,12 +359,12 @@
       "portal_url": "https://rera.telangana.gov.in",
       "search_url": "https://rera.telangana.gov.in/RERASearch?search=Aparna+Sarovar",
       "search_tokens": [
-        "sarovar",
         "aparna",
-        "zenith",
-        "constructions"
+        "sarovar",
+        "constructions",
+        "zenith"
       ],
-      "search_display": "Aparna Sarovar Zenith Â· Aparna Constructions Â· Hyderabad",
+      "search_display": "Aparna Sarovar Zenith · Aparna Constructions · Hyderabad",
       "direct_url": "https://rera.telangana.gov.in/RERASearch?search=Aparna+Sarovar"
     },
     {
@@ -381,13 +381,13 @@
       "portal_url": "https://www.tnrera.in",
       "search_url": "https://www.tnrera.in/projects?name=Casagrand+Ferns",
       "search_tokens": [
-        "casagrand",
         "ferns",
-        "ltd",
+        "casagrand",
         "builder",
+        "ltd",
         "pvt"
       ],
-      "search_display": "Casagrand Ferns Â· Casagrand Builder Pvt Ltd Â· Chennai",
+      "search_display": "Casagrand Ferns · Casagrand Builder Pvt Ltd · Chennai",
       "direct_url": "https://www.tnrera.in/projects?name=Casagrand+Ferns"
     },
     {
@@ -408,7 +408,7 @@
         "greenfield",
         "shriram"
       ],
-      "search_display": "Shriram Greenfield Â· Shriram Properties Â· Chennai",
+      "search_display": "Shriram Greenfield · Shriram Properties · Chennai",
       "direct_url": "https://www.tnrera.in/projects?name=Shriram+Greenfield"
     },
     {
@@ -429,7 +429,7 @@
         "realty",
         "shantigram"
       ],
-      "search_display": "Adani Shantigram Â· Adani Realty Â· Ahmedabad",
+      "search_display": "Adani Shantigram · Adani Realty · Ahmedabad",
       "direct_url": "https://gujrera.gujarat.gov.in/viewProjects?name=Adani+Shantigram"
     },
     {
@@ -446,12 +446,12 @@
       "portal_url": "https://gujrera.gujarat.gov.in",
       "search_url": "https://gujrera.gujarat.gov.in/viewProjects?name=Godrej+Hillside",
       "search_tokens": [
-        "properties",
+        "ltd",
         "hillside",
-        "godrej",
-        "ltd"
+        "properties",
+        "godrej"
       ],
-      "search_display": "Godrej Hillside Â· Godrej Properties Ltd Â· Ahmedabad",
+      "search_display": "Godrej Hillside · Godrej Properties Ltd · Ahmedabad",
       "direct_url": "https://gujrera.gujarat.gov.in/viewProjects?name=Godrej+Hillside"
     }
   ]

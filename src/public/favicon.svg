@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <linearGradient id="njroof" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FCD34D"/>
+      <stop offset="100%" stop-color="#F59E0B"/>
+    </linearGradient>
+    <filter id="njrs">
+      <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#92400E" flood-opacity="0.28"/>
+    </filter>
+    <clipPath id="njwall">
+      <path d="M16 92 L16 188 Q16 194 22 194 L178 194 Q184 194 184 188 L184 92 Z"/>
+    </clipPath>
+  </defs>
+  <rect width="200" height="200" rx="40" fill="#FFFDF7"/>
+  <path d="M16 92 L16 188 Q16 194 22 194 L178 194 Q184 194 184 188 L184 92 Z"
+    fill="white" stroke="#F59E0B" stroke-width="3.5"/>
+  <g clip-path="url(#njwall)">
+    <text x="102" y="190" text-anchor="middle"
+      font-family="'Noto Serif Kannada',Georgia,serif"
+      font-size="138" font-weight="900" fill="#4C1D95">ಜಾ</text>
+  </g>
+  <path d="M6 96 L100 10 L194 96 Z" fill="url(#njroof)" filter="url(#njrs)"/>
+  <line x1="6" y1="96" x2="194" y2="96" stroke="#D97706" stroke-width="3"/>
+  <rect x="124" y="22" width="20" height="38" rx="4" fill="#D97706"/>
+  <rect x="120" y="16" width="28" height="10" rx="4" fill="#B45309"/>
+</svg>

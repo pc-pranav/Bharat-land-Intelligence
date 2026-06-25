@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-23T15:53:02.757379Z",
+  "generated_at": "2026-06-24T14:48:56.304768+00:00",
   "total_regions": 34,
   "states": 8,
   "clusters": {
@@ -17,9 +17,9 @@
           "Kadugodi Tree Park (5.54km)"
         ],
         "_nearby_projects": [
-          "Namma Metro Yellow Line (RV Roadâ€“Bommasandra)",
-          "Namma Metro Blue Line Phase 2A (Silk Boardâ€“KR Pura",
-          "Namma Metro Blue Line Phase 2B (KR Puramâ€“Airport)"
+          "Namma Metro Yellow Line (RV Road–Bommasandra)",
+          "Namma Metro Blue Line Phase 2A (Silk Board–KR Pura",
+          "Namma Metro Blue Line Phase 2B (KR Puram–Airport)"
         ]
       },
       {
@@ -33,9 +33,9 @@
           "Kempegowda International Airport (4.58km)"
         ],
         "_nearby_projects": [
-          "North Amalgamation Layout (BDA) â€” Devanahalli Plan",
-          "Namma Metro Yellow Line (RV Roadâ€“Bommasandra)",
-          "Namma Metro Blue Line Phase 2A (Silk Boardâ€“KR Pura"
+          "North Amalgamation Layout (BDA) — Devanahalli Plan",
+          "Namma Metro Yellow Line (RV Road–Bommasandra)",
+          "Namma Metro Blue Line Phase 2A (Silk Board–KR Pura"
         ]
       },
       {
@@ -51,9 +51,9 @@
           "Singasandra (2.2km)"
         ],
         "_nearby_projects": [
-          "Hosur Expressway (Bengaluruâ€“Hosur, 4-lane to 8-lan",
-          "Namma Metro Yellow Line (RV Roadâ€“Bommasandra)",
-          "Namma Metro Blue Line Phase 2A (Silk Boardâ€“KR Pura"
+          "Hosur Expressway (Bengaluru–Hosur, 4-lane to 8-lan",
+          "Namma Metro Yellow Line (RV Road–Bommasandra)",
+          "Namma Metro Blue Line Phase 2A (Silk Board–KR Pura"
         ]
       },
       {
@@ -101,9 +101,9 @@
           "Andheri (5.5km)"
         ],
         "_nearby_projects": [
-          "Mumbai Metro Line 2B (DN Nagarâ€“Mankhurd)",
+          "Mumbai Metro Line 2B (DN Nagar–Mankhurd)",
           "Navi Mumbai International Airport (NMIA)",
-          "Mumbai Metro Line 3 (Colabaâ€“SEEPZâ€“BKCâ€“Airportâ€“Aare"
+          "Mumbai Metro Line 3 (Colaba–SEEPZ–BKC–Airport–Aare"
         ]
       },
       {
@@ -117,7 +117,7 @@
           "Pcmc Bhavan (8.33km)"
         ],
         "_nearby_projects": [
-          "Pune Metro Phase 1 Extensions (Pimpriâ€“Nigdi + Ramw"
+          "Pune Metro Phase 1 Extensions (Pimpri–Nigdi + Ramw"
         ]
       },
       {
@@ -130,8 +130,8 @@
         "_nearby_stations": [],
         "_nearby_projects": [
           "Navi Mumbai International Airport (NMIA)",
-          "Mumbai Metro Line 3 (Colabaâ€“SEEPZâ€“BKCâ€“Airportâ€“Aare",
-          "Mumbai Metro Line 2B (DN Nagarâ€“Mankhurd)"
+          "Mumbai Metro Line 3 (Colaba–SEEPZ–BKC–Airport–Aare",
+          "Mumbai Metro Line 2B (DN Nagar–Mankhurd)"
         ]
       },
       {
@@ -144,8 +144,8 @@
         "_nearby_stations": [],
         "_nearby_projects": [
           "Navi Mumbai International Airport (NMIA)",
-          "Mumbai Metro Line 3 (Colabaâ€“SEEPZâ€“BKCâ€“Airportâ€“Aare",
-          "Mumbai Metro Line 2B (DN Nagarâ€“Mankhurd)"
+          "Mumbai Metro Line 3 (Colaba–SEEPZ–BKC–Airport–Aare",
+          "Mumbai Metro Line 2B (DN Nagar–Mankhurd)"
         ]
       },
       {
@@ -187,8 +187,8 @@
         ],
         "_nearby_projects": [
           "SIPCOT Industrial Complexes Expansion (12 location",
-          "Chennai Metro Line 4 (Lighthouseâ€“Poonamallee)",
-          "Chennai Metro Line 5 (Madhavaramâ€“SIPCOT)"
+          "Chennai Metro Line 4 (Lighthouse–Poonamallee)",
+          "Chennai Metro Line 5 (Madhavaram–SIPCOT)"
         ]
       },
       {
@@ -204,8 +204,8 @@
           "St Thomas Mount (6.08km)"
         ],
         "_nearby_projects": [
-          "Chennai Metro Line 4 (Lighthouseâ€“Poonamallee)",
-          "Chennai Metro Line 5 (Madhavaramâ€“SIPCOT)"
+          "Chennai Metro Line 4 (Lighthouse–Poonamallee)",
+          "Chennai Metro Line 5 (Madhavaram–SIPCOT)"
         ]
       },
       {
@@ -256,8 +256,8 @@
         ],
         "_nearby_projects": [
           "Hyderabad Outer Ring Road (ORR) corridor developme",
-          "Hyderabad Metro Phase 2 (Airportâ€“Outer Ring Road e",
-          "Hyderabadâ€“Nagpur Expressway (NH-44 Telangana secti"
+          "Hyderabad Metro Phase 2 (Airport–Outer Ring Road e",
+          "Hyderabad–Nagpur Expressway (NH-44 Telangana secti"
         ]
       },
       {
@@ -269,9 +269,9 @@
         "_infra_score": 0.0,
         "_nearby_stations": [],
         "_nearby_projects": [
-          "Hyderabad Metro Phase 2 (Airportâ€“Outer Ring Road e",
+          "Hyderabad Metro Phase 2 (Airport–Outer Ring Road e",
           "Hyderabad Outer Ring Road (ORR) corridor developme",
-          "Hyderabadâ€“Nagpur Expressway (NH-44 Telangana secti"
+          "Hyderabad–Nagpur Expressway (NH-44 Telangana secti"
         ]
       },
       {
@@ -283,9 +283,9 @@
         "_infra_score": 0.0,
         "_nearby_stations": [],
         "_nearby_projects": [
-          "Hyderabad Metro Phase 2 (Airportâ€“Outer Ring Road e",
+          "Hyderabad Metro Phase 2 (Airport–Outer Ring Road e",
           "Hyderabad Outer Ring Road (ORR) corridor developme",
-          "Hyderabadâ€“Nagpur Expressway (NH-44 Telangana secti"
+          "Hyderabad–Nagpur Expressway (NH-44 Telangana secti"
         ]
       },
       {
@@ -337,7 +337,7 @@
         "_infra_score": 0.0,
         "_nearby_stations": [],
         "_nearby_projects": [
-          "Delhiâ€“Mumbai Expressway (Gujarat section, NH-148N)"
+          "Delhi–Mumbai Expressway (Gujarat section, NH-148N)"
         ]
       },
       {
@@ -367,7 +367,7 @@
           "Dwarka Sector 21 (9.62km)"
         ],
         "_nearby_projects": [
-          "Delhiâ€“Mumbai Industrial Corridor (UP + Haryana sec",
+          "Delhi–Mumbai Industrial Corridor (UP + Haryana sec",
           "Dwarka Expressway (NH-248BB) Gurugram Expansion",
           "Delhi Metro Phase 4 (6 corridors, 65 new stations)"
         ]
@@ -381,9 +381,9 @@
         "_infra_score": 2.44,
         "_nearby_stations": [],
         "_nearby_projects": [
-          "Delhiâ€“Mumbai Industrial Corridor (UP + Haryana sec",
+          "Delhi–Mumbai Industrial Corridor (UP + Haryana sec",
           "Delhi Metro Phase 4 (6 corridors, 65 new stations)",
-          "Delhiâ€“Meerut RRTS (Rapid Rail Transit System)"
+          "Delhi–Meerut RRTS (Rapid Rail Transit System)"
         ]
       },
       {
@@ -412,7 +412,7 @@
         ],
         "_nearby_projects": [
           "Delhi Metro Phase 4 (6 corridors, 65 new stations)",
-          "Delhiâ€“Meerut RRTS (Rapid Rail Transit System)",
+          "Delhi–Meerut RRTS (Rapid Rail Transit System)",
           "Dwarka Expressway (NH-248BB) Gurugram Expansion"
         ]
       },
@@ -454,7 +454,7 @@
         ],
         "_nearby_projects": [
           "New Town Silicon Valley (NKDA IT Hub)",
-          "Kolkata Metro New Townâ€“Rajarhat Extension"
+          "Kolkata Metro New Town–Rajarhat Extension"
         ]
       },
       {
@@ -471,7 +471,7 @@
         ],
         "_nearby_projects": [
           "New Town Silicon Valley (NKDA IT Hub)",
-          "Kolkata Metro New Townâ€“Rajarhat Extension"
+          "Kolkata Metro New Town–Rajarhat Extension"
         ]
       },
       {
