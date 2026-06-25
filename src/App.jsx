@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, Component } from "react";
+import React,{ useState, useEffect, useRef, useMemo, Component } from "react";
 import GoogleMapView from "./components/GoogleMapView";
 
 // API endpoint: in this Claude.ai artifact preview, call Anthropic directly.
@@ -2434,7 +2434,7 @@ function ScreenerTab(){
   const run=async()=>{
     setLoading(true);setResults(null);setError("");
     try{
-      const prompt=`You are Bharat Land Growth Intelligence Platform. Find 5 real land investment opportunities within ${f.radius} km of ${f.city}, India.
+      const prompt=`You are Namma Jaga AI. Find 5 real land investment opportunities within ${f.radius} km of ${f.city}, India.
 Filters: Min CAGR ${f.minCagr}%, Max price Rs${f.maxPrice}/sqft, Min infra score ${f.minInfra}/100, Max risk ${f.maxRisk}/100.
 
 SCORING CONSISTENCY — use these verified baselines for known localities (growth_score is computed from sub-scores: infra 25%, population 20%, economic 20%, connectivity 15%, urban_expansion 10%, momentum 5%, scarcity 5%, adjusted for risk and catalyst):
@@ -2524,7 +2524,7 @@ Each object must have: location, district, state, current_price_sqft, expected_c
   );
 }
 
-const SYS=`You are Bharat Land Growth Intelligence Platform — India's elite AI land investment intelligence system.
+const SYS=`You are Namma Jaga AI — India's most trusted AI-powered real estate intelligence platform at nammajaga.com.
 Today's date is ${new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}.
 
 Analyze the given Indian location. Return ONLY a raw JSON object starting with { and ending with }. No markdown, no fences.
@@ -4894,11 +4894,41 @@ function AppInner(){
 
   return(
     <div style={{minHeight:"100vh",background:C.bg}}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');`}</style>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Serif+Kannada:wght@900&display=swap');`}</style>
       <div style={{position:"sticky",top:0,zIndex:1000,boxShadow:"0 2px 12px rgba(0,0,0,0.18)"}}>
         <div style={{background:C.navy,padding:"8px 14px",display:"flex",alignItems:"center",gap:7}}>
-          <span style={{fontSize:15}}>🇮🇳</span>
-          <span style={{color:"#F8FAFB",fontFamily:"serif",fontSize:14,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>Bharat Land Intelligence</span>
+          <div style={{width:36,height:36,flexShrink:0,borderRadius:8,overflow:"hidden"}}>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" style={{width:"100%",height:"100%"}}>
+              <defs>
+                <linearGradient id="njroof" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor="#FCD34D"/>
+                  <stop offset="100%" stopColor="#F59E0B"/>
+                </linearGradient>
+                <filter id="njrs">
+                  <feDropShadow dx="0" dy="4" stdDeviation="5" floodColor="#92400E" floodOpacity="0.28"/>
+                </filter>
+                <clipPath id="njwall">
+                  <path d="M16 92 L16 188 Q16 194 22 194 L178 194 Q184 194 184 188 L184 92 Z"/>
+                </clipPath>
+              </defs>
+              <rect width="200" height="200" rx="40" fill="#FFFDF7"/>
+              <path d="M16 92 L16 188 Q16 194 22 194 L178 194 Q184 194 184 188 L184 92 Z"
+                fill="white" stroke="#F59E0B" strokeWidth="3.5"/>
+              <g clipPath="url(#njwall)">
+                <text x="102" y="190" textAnchor="middle"
+                  fontFamily="'Noto Serif Kannada',Georgia,serif"
+                  fontSize="138" fontWeight="900" fill="#4C1D95">ಜಾ</text>
+              </g>
+              <path d="M6 96 L100 10 L194 96 Z" fill="url(#njroof)" filter="url(#njrs)"/>
+              <line x1="6" y1="96" x2="194" y2="96" stroke="#D97706" strokeWidth="3"/>
+              <rect x="124" y="22" width="20" height="38" rx="4" fill="#D97706"/>
+              <rect x="120" y="16" width="28" height="10" rx="4" fill="#B45309"/>
+            </svg>
+          </div>
+          <div>
+            <div style={{color:"#F8FAFB",fontFamily:"serif",fontSize:14,whiteSpace:"nowrap",lineHeight:1}}>Namma Jaga</div>
+            <div style={{color:"#F59E0B",fontFamily:"Inter,sans-serif",fontSize:8,letterSpacing:"1.5px",opacity:0.85}}>ನಮ್ಮ ಜಾಗ · OUR PLACE</div>
+          </div>
         </div>
         <div style={{background:"#1E293B",display:"flex",gap:0,padding:"3px 6px 5px"}}>
           {[["home","🏠","Home"],["analyze","🔍","Analyze"],["screen","🎯","Screener"],["pricer","🏘️","Pricer"]].map(([k,icon,l])=>(
@@ -4920,7 +4950,7 @@ function AppInner(){
         {tab==="pricer"&&<PricerTab/>}
       </div>
       <div style={{textAlign:"center",padding:"10px",fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,borderTop:`1px solid ${C.border}`}}>
-        AI-generated analysis · Not financial advice · Verify before investing
+        AI-generated analysis · Not financial advice · Verify before investing · nammajaga.com
       </div>
     </div>
   );
