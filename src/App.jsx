@@ -941,26 +941,66 @@ function IndiaMap({pins=[],onStateClick,selectedState=null,focusLat=null,focusLn
 
 
 // ── MapView — uses built-in SVG IndiaMap (no external dependencies required) ──
-function MapView(props) {
-  const apiKey = null; // Google Maps not used in artifact preview
-  const [useGoogle, setUseGoogle] = useState(!!apiKey);
-  const mapProps = { stateGrowth: STATE_GROWTH, regionClusters: REGION_CLUSTERS, ...props };
-  if (!apiKey) return <IndiaMap {...props} />;
+function MapView({pins=[], height=300, focusLat, focusLng, focusZoom=5, onStateClick, selectedState}) {
+  // Google Maps API key — null in artifact preview, set via window.__NJ_GMAPS_KEY__ on deploy
+  const apiKey = (typeof window !== "undefined" && window.__NJ_GMAPS_KEY__) || (typeof import.meta !== "undefined" && import.meta.env?.VITE_GOOGLE_MAPS_API_KEY) || null;
+
+  const [mode, setMode] = useState(apiKey ? "google" : "svg");
+
+  // Build Google Maps Embed URL — uses Maps Embed API (no JS SDK, no CORS issues)
+  const buildEmbedUrl = () => {
+    if(!apiKey) return null;
+    const center = focusLat && focusLng
+      ? `${focusLat},${focusLng}`
+      : "20.5937,78.9629"; // India centre
+    const zoom = focusZoom || 5;
+    // Use search mode to show a map centred on the location
+    return `https://www.google.com/maps/embed/v1/view?key=${apiKey}&center=${center}&zoom=${zoom}&maptype=roadmap`;
+  };
+
+  const embedUrl = buildEmbedUrl();
+
   return (
-    <div style={{ position: "relative" }}>
-      <div style={{ position: "absolute", top: 10, left: 10, zIndex: 30, display: "flex", gap: 4 }}>
-        {[["🗺️ Live Map", true], ["📍 Quick View", false]].map(([label, val]) => (
-          <button key={label} onClick={() => setUseGoogle(val)}
-            style={{ background: useGoogle === val ? C.navy : "rgba(255,255,255,0.95)",
-              color: useGoogle === val ? "#fff" : C.muted,
-              border: "1px solid " + (useGoogle === val ? C.navy : C.border),
-              borderRadius: 16, padding: "5px 11px", fontFamily: "Inter,sans-serif",
-              fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
-            {label}
-          </button>
-        ))}
-      </div>
-      {<IndiaMap {...props} />}
+    <div style={{position:"relative",borderRadius:10,overflow:"hidden",background:"#E8EEF4"}}>
+      {/* Mode toggle — only show if Google Maps key available */}
+      {apiKey&&(
+        <div style={{position:"absolute",top:8,left:8,zIndex:30,display:"flex",gap:4}}>
+          {[["🗺️ Live Map","google"],["📍 Quick View","svg"]].map(([label,val])=>(
+            <button key={val} onClick={()=>setMode(val)}
+              style={{background:mode===val?C.navy:"rgba(255,255,255,0.92)",
+                color:mode===val?"#fff":C.muted,
+                border:`1px solid ${mode===val?C.navy:C.border}`,
+                borderRadius:14,padding:"5px 10px",fontFamily:"Inter,sans-serif",
+                fontSize:10,fontWeight:600,cursor:"pointer",boxShadow:"0 1px 4px rgba(0,0,0,.15)"}}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Google Maps Embed iframe */}
+      {mode==="google"&&embedUrl&&(
+        <iframe
+          title="Namma Jaga Map"
+          src={embedUrl}
+          width="100%"
+          height={height}
+          style={{border:0,display:"block"}}
+          allowFullScreen
+          loading="lazy"
+          referrerPolicy="no-referrer-when-downgrade"
+        />
+      )}
+
+      {/* SVG India Map fallback */}
+      {(mode==="svg"||!embedUrl)&&(
+        <IndiaMap
+          pins={pins}
+          height={height}
+          onStateClick={onStateClick}
+          selectedState={selectedState}
+        />
+      )}
     </div>
   );
 }
@@ -4880,39 +4920,31 @@ function AppInner(){
     <div style={{minHeight:"100vh",background:C.bg}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Serif+Kannada:wght@900&display=swap');`}</style>
       <div style={{position:"sticky",top:0,zIndex:1000,boxShadow:"0 2px 12px rgba(0,0,0,0.18)"}}>
-        <div style={{background:C.navy,padding:"8px 14px",display:"flex",alignItems:"center",gap:7}}>
-          <div style={{width:36,height:36,flexShrink:0,borderRadius:8,overflow:"hidden"}}>
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" style={{width:"100%",height:"100%"}}>
-              <defs>
-                <linearGradient id="njroof" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#FCD34D"/>
-                  <stop offset="100%" stopColor="#F59E0B"/>
-                </linearGradient>
-                <filter id="njrs">
-                  <feDropShadow dx="0" dy="4" stdDeviation="5" floodColor="#92400E" floodOpacity="0.28"/>
-                </filter>
-                <clipPath id="njwall">
-                  <path d="M16 92 L16 188 Q16 194 22 194 L178 194 Q184 194 184 188 L184 92 Z"/>
-                </clipPath>
-              </defs>
-              <rect width="200" height="200" rx="40" fill="#FFFDF7"/>
-              <path d="M16 92 L16 188 Q16 194 22 194 L178 194 Q184 194 184 188 L184 92 Z"
-                fill="white" stroke="#F59E0B" strokeWidth="3.5"/>
-              <g clipPath="url(#njwall)">
-                <text x="102" y="190" textAnchor="middle"
-                  fontFamily="'Noto Serif Kannada',Georgia,serif"
-                  fontSize="138" fontWeight="900" fill="#4C1D95">ಜಾ</text>
-              </g>
-              <path d="M6 96 L100 10 L194 96 Z" fill="url(#njroof)" filter="url(#njrs)"/>
-              <line x1="6" y1="96" x2="194" y2="96" stroke="#D97706" strokeWidth="3"/>
-              <rect x="124" y="22" width="20" height="38" rx="4" fill="#D97706"/>
-              <rect x="120" y="16" width="28" height="10" rx="4" fill="#B45309"/>
-            </svg>
-          </div>
-          <div>
-            <div style={{color:"#F8FAFB",fontFamily:"serif",fontSize:14,whiteSpace:"nowrap",lineHeight:1}}>Namma Jaga</div>
-            <div style={{color:"#F59E0B",fontFamily:"Inter,sans-serif",fontSize:8,letterSpacing:"1.5px",opacity:0.85}}>ನಮ್ಮ ಜಾಗ · OUR PLACE</div>
-          </div>
+        <div style={{background:"#fff",padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:"1px solid #E2E8F0"}}>
+          {/* Logo — tappable, goes to Home */}
+          <button onClick={()=>setTab("home")} style={{background:"none",border:"none",cursor:"pointer",
+            display:"flex",alignItems:"center",gap:9,padding:0}}>
+            {/* NJ Logo — navy house outline + N + green bars + J + arrow */}
+            <img
+              src="/logo.jpg"
+              alt="Namma Jaga"
+              style={{width:44,height:44,objectFit:"contain",borderRadius:6}}
+            />
+            <div>
+              <div style={{display:"flex",gap:2,lineHeight:1,marginBottom:2}}>
+                <span style={{color:"#1B2D6B",fontFamily:"Inter,sans-serif",fontSize:16,fontWeight:900,letterSpacing:"-0.5px"}}>NAMMA</span>
+                <span style={{color:"#1F7A1F",fontFamily:"Inter,sans-serif",fontSize:16,fontWeight:900,letterSpacing:"-0.5px"}}> JAGA</span>
+              </div>
+              <div style={{color:"#64748B",fontFamily:"Inter,sans-serif",fontSize:8,letterSpacing:"1.5px",textTransform:"uppercase"}}>Know Today. Grow Tomorrow.</div>
+            </div>
+          </button>
+
+          {/* About Us — right side */}
+          <button onClick={()=>setTab("about")} style={{background:"none",border:"1px solid #E2E8F0",
+            borderRadius:8,padding:"6px 12px",cursor:"pointer",fontFamily:"Inter,sans-serif",
+            fontSize:11,fontWeight:600,color:"#1B2D6B",display:"flex",alignItems:"center",gap:4}}>
+            About Us
+          </button>
         </div>
         <div style={{background:"#1E293B",display:"flex",gap:0,padding:"3px 6px 5px"}}>
           {[["home","🏠","Home"],["analyze","🔍","Analyze"],["screen","🎯","Screener"],["pricer","🏘️","Pricer"]].map(([k,icon,l])=>(
@@ -4932,6 +4964,97 @@ function AppInner(){
         {tab==="analyze"&&<AnalyzeTab key={analyzeQuery} initialQuery={analyzeQuery} onClear={()=>{setAnalyzeQuery("");setTab("home");}}/>}
         {tab==="screen"&&<ScreenerTab/>}
         {tab==="pricer"&&<PricerTab/>}
+        {tab==="about"&&(
+          <div style={{padding:"20px 16px",maxWidth:680,margin:"0 auto",display:"flex",flexDirection:"column",gap:16}}>
+
+            {/* Hero */}
+            <div style={{background:"linear-gradient(135deg,#1B2D6B,#0F1B2D)",borderRadius:16,padding:"24px 20px",textAlign:"center"}}>
+              <div style={{color:"#fff",fontFamily:"Georgia,serif",fontSize:22,fontWeight:"bold",lineHeight:1.3,marginBottom:8}}>
+                Know Today.<br/>Grow Tomorrow.
+              </div>
+              <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:13,lineHeight:1.7}}>
+                AI-powered real estate intelligence built for Indian property buyers and investors.
+              </div>
+            </div>
+
+            {/* Mission */}
+            <div style={{background:"#fff",borderRadius:12,padding:"16px",border:"1px solid #E2E8F0"}}>
+              <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:"#1B2D6B",marginBottom:8}}>Why we built this</div>
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:"#475569",lineHeight:1.8}}>
+                Buying property in India shouldn't require 40 browser tabs, three brokers, and months of research. 
+                The data existed — it was just scattered. Namma Jaga brings location intelligence, 
+                infrastructure insights, pricing accuracy, and investment signals into one place. 
+                No broker angle. No hidden agenda. Just data.
+              </div>
+            </div>
+
+            {/* What it does */}
+            <div style={{background:"#fff",borderRadius:12,padding:"16px",border:"1px solid #E2E8F0"}}>
+              <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:"#1B2D6B",marginBottom:12}}>What Namma Jaga does</div>
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                {[
+                  ["🏠","Home — Market Intelligence","Ranked investment corridors across India, scored by a 9-factor AI model updated with real infrastructure data."],
+                  ["🔍","Analyze — Growth Intelligence","Type any locality. Get a scored breakdown, trajectory, metro connectivity, infrastructure pipeline, and red flags."],
+                  ["🎯","Screener — Opportunity Finder","Set a city, radius, and minimum score. Get ranked opportunities with rationale — not just listings."],
+                  ["🏘️","Pricer — Property Valuation","Enter any property details. Get a market-rate estimate, 10-year price projection, comparable projects, and loan + UDS calculator."],
+                ].map(([icon,title,desc])=>(
+                  <div key={title} style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+                    <span style={{fontSize:20,flexShrink:0,marginTop:2}}>{icon}</span>
+                    <div>
+                      <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:"#1E293B",marginBottom:3}}>{title}</div>
+                      <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#64748B",lineHeight:1.6}}>{desc}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Stats */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              {[
+                ["34","Investment corridors ranked"],
+                ["12+","Cities covered"],
+                ["159","Localities with pricing data"],
+                ["9","Growth score factors"],
+              ].map(([num,label])=>(
+                <div key={label} style={{background:"#fff",borderRadius:12,padding:"14px",border:"1px solid #E2E8F0",textAlign:"center"}}>
+                  <div style={{fontFamily:"Inter,sans-serif",fontWeight:900,fontSize:24,color:"#1B2D6B",lineHeight:1}}>{num}</div>
+                  <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#64748B",marginTop:4,lineHeight:1.4}}>{label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Built by */}
+            <div style={{background:"#F8FAFF",borderRadius:12,padding:"16px",border:"1px solid #E2E8F0"}}>
+              <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:"#1B2D6B",marginBottom:8}}>Built by</div>
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:"#475569",lineHeight:1.8}}>
+                Namma Jaga was built by Pranav, a Data Engineer with 5+ years of experience building 
+                data pipelines and intelligence systems. The platform is powered by a Python ETL pipeline, 
+                Claude AI, and real infrastructure data — not opinions.
+              </div>
+              <div style={{marginTop:10,fontFamily:"Inter,sans-serif",fontSize:11,color:"#2E8B47",fontWeight:600}}>
+                Version 1.0 · Launched June 2026
+              </div>
+            </div>
+
+            {/* Disclaimer */}
+            <div style={{background:"#FFFBEB",borderRadius:10,padding:"12px 14px",border:"1px solid #FDE68A"}}>
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#92400E",lineHeight:1.7}}>
+                ⚠️ <strong>Disclaimer:</strong> All analysis is AI-generated and for informational purposes only. 
+                Not financial or legal advice. Always verify independently before making any property decisions. 
+                Namma Jaga does not guarantee the accuracy of pricing estimates or growth projections.
+              </div>
+            </div>
+
+            {/* CTA */}
+            <button onClick={()=>setTab("analyze")} style={{background:"#1B2D6B",color:"#fff",border:"none",
+              borderRadius:10,padding:"14px",fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,
+              cursor:"pointer"}}>
+              Start Analyzing → nammajaga.com
+            </button>
+
+          </div>
+        )}
         
       </div>
       <div style={{textAlign:"center",padding:"10px",fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,borderTop:`1px solid ${C.border}`}}>
