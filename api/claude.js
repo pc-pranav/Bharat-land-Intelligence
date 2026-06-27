@@ -1,10 +1,6 @@
 import { getCached, setCached, TTL } from '../lib/cache.js';
 
 export default async function handler(req, res) {
-  // Top-level try/catch — catches anything that escapes the inner handler,
-  // including import-time errors, body parse failures, and unexpected throws
-  // from the cache layer that previously caused FUNCTION_INVOCATION_FAILED
-  // instead of a clean 500 JSON response.
   try {
     if (req.method === 'OPTIONS') {
       res.setHeader('Access-Control-Allow-Origin', '*');
@@ -12,79 +8,149 @@ export default async function handler(req, res) {
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
       return res.status(200).end();
     }
-
-    if (req.method !== 'POST') {
-      return res.status(405).json({ error: 'Method not allowed' });
-    }
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (!process.env.ANTHROPIC_API_KEY) {
-      return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured. Add it in Vercel Environment Variables.' });
+      return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured.' });
     }
 
     const { cacheKey, cacheType, ...anthropicBody } = req.body;
-    const fullCacheKey = cacheKey ? `bharat-land:${cacheType || 'generic'}:${cacheKey}` : null;
+    const fullCacheKey = cacheKey ? `nj:${cacheType||'generic'}:${cacheKey}` : null;
     const ttl = TTL[cacheType] || TTL.analyze;
 
-    // Cache check
+    // ── 1. Redis cache check — instant return if hit ─────────────────────────
     if (fullCacheKey) {
       const cached = await getCached(fullCacheKey);
       if (cached) {
         console.log(`[NJ] CACHE HIT: ${fullCacheKey}`);
-        // cached may be a string (Upstash auto-parses) or object
         const obj = typeof cached === 'string' ? JSON.parse(cached) : cached;
         return res.status(200).json({ ...obj, _cacheHit: true });
       }
       console.log(`[NJ] CACHE MISS: ${fullCacheKey}`);
     }
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    // ── 2. Stream from Anthropic — avoids Vercel 10s timeout ─────────────────
+    // Streaming keeps the HTTP connection open while tokens arrive,
+    // so the function never times out even on long responses.
+    const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'Content-Type':    'application/json',
+        'x-api-key':       process.env.ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'prompt-caching-2024-07-31',   // Anthropic caches SYS prompt on their servers for 5 mins (ephemeral_5m in usage) — this is expected and correct. Redis cache handles our 7-day response caching.
+        'anthropic-beta':  'prompt-caching-2024-07-31',
       },
-      body: JSON.stringify({ ...anthropicBody, stream: false }),
+      body: JSON.stringify({ ...anthropicBody, stream: true }),
     });
 
-    const data = await response.json();
-
-    if (
-      fullCacheKey &&
-      response.ok &&
-      !data.error &&
-      data.stop_reason !== 'max_tokens'
-    ) {
-      // Cache write failure should never surface to the user — fire and forget
-      setCached(fullCacheKey, data, ttl)
-        .then(() => console.log(`[NJ] CACHE WRITE: ${fullCacheKey} (TTL: ${ttl}s)`))
-        .catch(e => console.error('Cache write error:', e.message));
+    if (!anthropicRes.ok) {
+      const err = await anthropicRes.json().catch(() => ({ error: { message: 'Anthropic error' } }));
+      return res.status(anthropicRes.status).json(err);
     }
 
-    // Log token usage to Vercel function logs — view at vercel.com → project → logs
-    if(data.usage) {
-      const u = data.usage;
-      const cached = u.cache_read_input_tokens || 0;
-      const fresh  = u.input_tokens || 0;
-      const out    = u.output_tokens || 0;
-      const type   = req.body.cacheType || 'unknown';
-      console.log(`[NJ] ${type} | in:${fresh} cached:${cached} out:${out} | total:${fresh+cached+out} tokens`);
+    // ── 3. Collect stream + forward as SSE to client ──────────────────────────
+    // We collect the full text while streaming so we can:
+    //  a) Cache the completed response in Redis
+    //  b) Return a single JSON blob (simpler client-side handling)
+    // The client sees data arriving progressively via SSE events.
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+
+    const reader = anthropicRes.body.getReader();
+    const decoder = new TextDecoder();
+
+    let fullText = '';
+    let usage    = {};
+    let stopReason = null;
+    let inputTokens = 0;
+
+    const sendEvent = (data) => {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') continue;
+
+          try {
+            const evt = JSON.parse(data);
+
+            if (evt.type === 'content_block_delta' && evt.delta?.text) {
+              fullText += evt.delta.text;
+              // Forward text deltas to client for real-time display (optional)
+              sendEvent({ type: 'delta', text: evt.delta.text });
+            }
+
+            if (evt.type === 'message_delta') {
+              stopReason = evt.delta?.stop_reason;
+              if (evt.usage) Object.assign(usage, evt.usage);
+            }
+
+            if (evt.type === 'message_start' && evt.message?.usage) {
+              Object.assign(usage, evt.message.usage);
+              inputTokens = evt.message.usage.input_tokens || 0;
+            }
+          } catch (_) { /* skip malformed SSE lines */ }
+        }
+      }
+    } finally {
+      reader.releaseLock();
     }
-    return res.status(response.status).json({ ...data, _cacheHit: false });
+
+    // ── 4. Build the final response object ────────────────────────────────────
+    const finalResponse = {
+      content:     [{ type: 'text', text: fullText }],
+      usage,
+      stop_reason: stopReason,
+      model:       anthropicBody.model,
+      _cacheHit:   false,
+    };
+
+    // ── 5. Cache the completed response ───────────────────────────────────────
+    if (fullCacheKey && stopReason !== 'max_tokens') {
+      const slim = { content: finalResponse.content, usage, model: finalResponse.model, stop_reason: stopReason };
+      setCached(fullCacheKey, slim, ttl)
+        .then(() => console.log(`[NJ] CACHE WRITE: ${fullCacheKey} TTL:${ttl}s`))
+        .catch(e => console.error('[NJ] Cache write error:', e.message));
+    }
+
+    // ── 6. Send final complete event then close ────────────────────────────────
+    const type = cacheType || 'unknown';
+    const cacheRead = usage.cache_read_input_tokens || 0;
+    console.log(`[NJ] ${type} | in:${inputTokens} cache_read:${cacheRead} out:${usage.output_tokens||0}`);
+
+    sendEvent({ type: 'done', response: finalResponse });
+    res.end();
 
   } catch (error) {
-    // Log full error for Vercel function logs, return clean JSON to client
-    console.error('Handler error:', error);
-    return res.status(500).json({ error: error.message || 'Internal server error' });
+    console.error('[NJ] Handler error:', error);
+    try {
+      res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
+      res.end();
+    } catch (_) {
+      res.status(500).json({ error: error.message || 'Internal server error' });
+    }
   }
 }
 
 export const config = {
   api: {
-    bodyParser: { sizeLimit: '1mb' },
+    bodyParser:       { sizeLimit: '1mb' },
+    responseLimit:    false,  // required for streaming
   },
 };

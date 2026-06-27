@@ -2906,6 +2906,7 @@ function AnalyzeTab({initialQuery="",onClear}){
     // ── Canonical search string for the AI prompt ──────────────────────────────
     const aiLoc = placeData?.display || loc;   // use Google's canonical name if available
 
+    // call() — handles both SSE streaming (prod) and plain JSON (artifact preview)
     const call=async(phase,prompt,maxTok)=>{
       const res=await fetch(API_ENDPOINT,{
         method:"POST",headers:{"Content-Type":"application/json"},
@@ -2916,9 +2917,40 @@ function AnalyzeTab({initialQuery="",onClear}){
           cacheKey:`analyze_${slug}_p${phase}`,cacheType:"analyze"
         }),
       });
-      const raw=await res.text();
-      let d=null;try{d=JSON.parse(raw);}catch{}
-      if(!res.ok||d?.error) throw new Error(d?.error?.message||raw.slice(0,200));
+      if(!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const contentType = res.headers.get("content-type")||"";
+
+      // ── SSE stream (prod via /api/claude) ─────────────────────────────────
+      if(contentType.includes("text/event-stream")) {
+        const reader = res.body.getReader();
+        const dec    = new TextDecoder();
+        let fullText = "";
+        let finalResp = null;
+        try {
+          while(true) {
+            const {done,value} = await reader.read();
+            if(done) break;
+            const chunk = dec.decode(value,{stream:true});
+            for(const line of chunk.split("\n")) {
+              if(!line.startsWith("data: ")) continue;
+              try {
+                const evt = JSON.parse(line.slice(6));
+                if(evt.type==="delta")    fullText += evt.text||"";
+                if(evt.type==="done")     finalResp = evt.response;
+                if(evt.type==="error")    throw new Error(evt.error||"Stream error");
+              } catch(parseErr) { if(parseErr.message!=="Unexpected token") throw parseErr; }
+            }
+          }
+        } finally { reader.releaseLock(); }
+        const text = finalResp?.content?.[0]?.text || fullText;
+        return parseJSON(text);
+      }
+
+      // ── Plain JSON (artifact preview — direct Anthropic endpoint) ─────────
+      const raw = await res.text();
+      let d=null; try{d=JSON.parse(raw);}catch{}
+      if(d?.error) throw new Error(d.error.message||"API error");
       return parseJSON(d?.content?.map(b=>b.text||"").join("")||"");
     };
 
