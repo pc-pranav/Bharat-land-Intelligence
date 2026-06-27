@@ -43,6 +43,7 @@ export default async function handler(req, res) {
         'Content-Type': 'application/json',
         'x-api-key': process.env.ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'prompt-caching-2024-07-31',   // cache SYS prompt server-side
       },
       body: JSON.stringify({ ...anthropicBody, stream: false }),
     });
@@ -61,6 +62,15 @@ export default async function handler(req, res) {
       );
     }
 
+    // Log token usage to Vercel function logs — view at vercel.com → project → logs
+    if(data.usage) {
+      const u = data.usage;
+      const cached = u.cache_read_input_tokens || 0;
+      const fresh  = u.input_tokens || 0;
+      const out    = u.output_tokens || 0;
+      const type   = req.body.cacheType || 'unknown';
+      console.log(`[NJ] ${type} | in:${fresh} cached:${cached} out:${out} | total:${fresh+cached+out} tokens`);
+    }
     return res.status(response.status).json({ ...data, _cacheHit: false });
 
   } catch (error) {

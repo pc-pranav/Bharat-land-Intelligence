@@ -941,70 +941,240 @@ function IndiaMap({pins=[],onStateClick,selectedState=null,focusLat=null,focusLn
 
 
 // ── MapView — uses built-in SVG IndiaMap (no external dependencies required) ──
-function MapView({pins=[], height=300, focusLat, focusLng, focusZoom=5, onStateClick, selectedState}) {
-  // Google Maps API key — null in artifact preview, set via window.__NJ_GMAPS_KEY__ on deploy
-  const apiKey = (typeof window !== "undefined" && window.__NJ_GMAPS_KEY__) || (typeof import.meta !== "undefined" && import.meta.env?.VITE_GOOGLE_MAPS_API_KEY) || null;
-
-  const [mode, setMode] = useState(apiKey ? "google" : "svg");
-
-  // Build Google Maps Embed URL — uses Maps Embed API (no JS SDK, no CORS issues)
-  const buildEmbedUrl = () => {
-    if(!apiKey) return null;
-    const center = focusLat && focusLng
-      ? `${focusLat},${focusLng}`
-      : "20.5937,78.9629"; // India centre
-    const zoom = focusZoom || 5;
-    // Use search mode to show a map centred on the location
-    return `https://www.google.com/maps/embed/v1/view?key=${apiKey}&center=${center}&zoom=${zoom}&maptype=roadmap`;
+// ── Google Maps JS API loader (singleton) ────────────────────────────────────
+let _gmapsLoaded = false;
+let _gmapsCallbacks = [];
+function loadGoogleMaps(apiKey, cb) {
+  if(typeof window === 'undefined') return;
+  if(window.google && window.google.maps) { cb(); return; }
+  if(_gmapsLoaded) { _gmapsCallbacks.push(cb); return; }
+  _gmapsLoaded = true;
+  _gmapsCallbacks.push(cb);
+  window.__njGmapsReady = () => {
+    _gmapsCallbacks.forEach(fn => fn());
+    _gmapsCallbacks = [];
   };
+  const s = document.createElement('script');
+  s.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&callback=__njGmapsReady&libraries=visualization`;
+  s.async = true; s.defer = true;
+  document.head.appendChild(s);
+}
 
-  const embedUrl = buildEmbedUrl();
+// ── Score → color for markers and choropleth ─────────────────────────────────
+function scoreToColor(score) {
+  if(!score) return '#94A3B8';
+  if(score >= 85) return '#059669'; // dark green
+  if(score >= 75) return '#34D399'; // green
+  if(score >= 65) return '#F59E0B'; // amber
+  if(score >= 55) return '#F97316'; // orange
+  return '#EF4444';                 // red
+}
+
+function MapView({pins=[], height=300, focusLat, focusLng, focusZoom=5, onStateClick, selectedState, localityName}) {
+  const apiKey = (typeof window !== 'undefined' && window.__NJ_GMAPS_KEY__) || (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GOOGLE_MAPS_API_KEY) || null;
+  const [mode, setMode] = React.useState('google'); // prod: always Google Maps
+  const [maptype, setMaptype] = React.useState('roadmap');
+  const [ready, setReady] = React.useState(!!(typeof window !== 'undefined' && window.google?.maps));
+  const mapRef = React.useRef(null);
+  const mapInstanceRef = React.useRef(null);
+  const markersRef = React.useRef([]);
+
+  // Load Maps JS API
+  React.useEffect(() => {
+    if(!apiKey || mode !== 'google') return;
+    loadGoogleMaps(apiKey, () => setReady(true));
+  }, [apiKey, mode]);
+
+  // Init map + draw whenever ready/props change
+  React.useEffect(() => {
+    if(!ready || !mapRef.current || mode !== 'google') return;
+    const google = window.google;
+
+    const center = (focusLat && focusLng)
+      ? {lat: parseFloat(focusLat), lng: parseFloat(focusLng)}
+      : {lat: 20.5937, lng: 78.9629};
+
+    const zoom = focusLat ? (focusZoom || 14) : 5;
+
+    // Create or reuse map instance
+    if(!mapInstanceRef.current) {
+      mapInstanceRef.current = new google.maps.Map(mapRef.current, {
+        center, zoom,
+        mapTypeId: maptype,
+        mapTypeControl: false,
+        streetViewControl: false,
+        fullscreenControl: true,
+        zoomControl: true,
+        styles: [
+          {featureType:'poi',elementType:'labels',stylers:[{visibility:'off'}]},
+          {featureType:'transit',elementType:'labels',stylers:[{visibility:'off'}]},
+        ]
+      });
+    } else {
+      mapInstanceRef.current.setCenter(center);
+      mapInstanceRef.current.setZoom(zoom);
+      mapInstanceRef.current.setMapTypeId(maptype);
+    }
+
+    const map = mapInstanceRef.current;
+
+    // Clear old markers
+    markersRef.current.forEach(m => m.setMap(null));
+    markersRef.current = [];
+
+    // ── Case 1: Locality analysis — single marker with info window ────────────
+    if(focusLat && focusLng) {
+      const pos = {lat: parseFloat(focusLat), lng: parseFloat(focusLng)};
+      const marker = new google.maps.Marker({
+        position: pos,
+        map,
+        title: localityName || 'Locality',
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 14,
+          fillColor: '#2563EB',
+          fillOpacity: 1,
+          strokeColor: '#fff',
+          strokeWeight: 3,
+        }
+      });
+      const infoWindow = new google.maps.InfoWindow({
+        content: `<div style="font-family:Inter,sans-serif;padding:4px 8px;min-width:120px">
+          <div style="font-weight:700;font-size:13px;color:#1E293B">${localityName||'Locality'}</div>
+          ${pins[0]?.score ? `<div style="color:${scoreToColor(pins[0].score)};font-weight:700;font-size:12px;margin-top:2px">Score: ${pins[0].score}/100</div>` : ''}
+        </div>`
+      });
+      marker.addListener('click', () => infoWindow.open(map, marker));
+      infoWindow.open(map, marker);
+      markersRef.current.push(marker);
+
+      // Heatmap-style circle overlay
+      const circle = new google.maps.Circle({
+        map,
+        center: pos,
+        radius: 800,
+        fillColor: '#2563EB',
+        fillOpacity: 0.08,
+        strokeColor: '#2563EB',
+        strokeOpacity: 0.3,
+        strokeWeight: 1.5,
+      });
+      markersRef.current.push(circle);
+    }
+    // ── Case 2: Multiple pins (screener results) ───────────────────────────────
+    else if(pins.length > 0) {
+      const bounds = new google.maps.LatLngBounds();
+      pins.forEach((pin, i) => {
+        if(!pin.lat || !pin.lng) return;
+        const pos = {lat: parseFloat(pin.lat), lng: parseFloat(pin.lng)};
+        const color = scoreToColor(pin.score);
+        const marker = new google.maps.Marker({
+          position: pos,
+          map,
+          title: pin.name || `Result ${i+1}`,
+          label: {
+            text: String(pin.score || i+1),
+            color: '#fff',
+            fontSize: '11px',
+            fontWeight: 'bold',
+          },
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 18,
+            fillColor: color,
+            fillOpacity: 0.95,
+            strokeColor: '#fff',
+            strokeWeight: 2.5,
+          }
+        });
+        const infoWindow = new google.maps.InfoWindow({
+          content: `<div style="font-family:Inter,sans-serif;padding:4px 8px">
+            <div style="font-weight:700;font-size:13px;color:#1E293B">${pin.name||''}</div>
+            ${pin.score?`<div style="color:${color};font-weight:700">Score: ${pin.score}/100</div>`:''}
+            ${pin.price?`<div style="color:#2563EB;font-size:12px">${pin.price}</div>`:''}
+          </div>`
+        });
+        marker.addListener('click', () => infoWindow.open(map, marker));
+        markersRef.current.push(marker);
+        bounds.extend(pos);
+      });
+      if(!bounds.isEmpty()) map.fitBounds(bounds, {top:40,right:20,bottom:20,left:20});
+    }
+    // ── Case 3: India overview — color state boundaries ────────────────────────
+    else {
+      // No pins, no focus — show India with colored state markers from STATE_GROWTH
+      Object.entries(STATE_GROWTH).forEach(([state, score]) => {
+        const stateCenters = {
+          'Karnataka':{lat:15.3173,lng:75.7139},'Maharashtra':{lat:19.7515,lng:75.7139},
+          'Tamil Nadu':{lat:11.1271,lng:78.6569},'Telangana':{lat:17.1232,lng:79.2088},
+          'Gujarat':{lat:22.2587,lng:71.1924},'Andhra Pradesh':{lat:15.9129,lng:79.7400},
+          'Rajasthan':{lat:27.0238,lng:74.2179},'Haryana':{lat:29.0588,lng:76.0856},
+          'Uttar Pradesh':{lat:26.8467,lng:80.9462},'West Bengal':{lat:22.9868,lng:87.8550},
+          'Kerala':{lat:10.8505,lng:76.2711},'Punjab':{lat:31.1471,lng:75.3412},
+          'Madhya Pradesh':{lat:22.9734,lng:78.6569},'Delhi':{lat:28.7041,lng:77.1025},
+        };
+        const center = stateCenters[state];
+        if(!center) return;
+        const marker = new google.maps.Marker({
+          position: center, map,
+          title: `${state}: ${score}/100`,
+          label: {text: String(score), color:'#fff', fontSize:'10px', fontWeight:'bold'},
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 20,
+            fillColor: scoreToColor(score),
+            fillOpacity: 0.9,
+            strokeColor: '#fff',
+            strokeWeight: 2,
+          }
+        });
+        marker.addListener('click', () => {
+          if(onStateClick) onStateClick(state);
+        });
+        markersRef.current.push(marker);
+      });
+    }
+  }, [ready, mode, focusLat, focusLng, focusZoom, maptype, pins.length]);
 
   return (
-    <div style={{position:"relative",borderRadius:10,overflow:"hidden",background:"#E8EEF4"}}>
-      {/* Mode toggle — only show if Google Maps key available */}
+    <div style={{position:'relative',borderRadius:10,overflow:'hidden',background:'#E8EEF4'}}>
+      {/* Toggle bar */}
       {apiKey&&(
-        <div style={{position:"absolute",top:8,left:8,zIndex:30,display:"flex",gap:4}}>
-          {[["🗺️ Live Map","google"],["📍 Quick View","svg"]].map(([label,val])=>(
-            <button key={val} onClick={()=>setMode(val)}
-              style={{background:mode===val?C.navy:"rgba(255,255,255,0.92)",
-                color:mode===val?"#fff":C.muted,
-                border:`1px solid ${mode===val?C.navy:C.border}`,
-                borderRadius:14,padding:"5px 10px",fontFamily:"Inter,sans-serif",
-                fontSize:10,fontWeight:600,cursor:"pointer",boxShadow:"0 1px 4px rgba(0,0,0,.15)"}}>
+        <div style={{position:'absolute',top:8,left:8,zIndex:30,display:'flex',gap:4,flexWrap:'wrap'}}>
+
+          {mode==='google'&&[['🛣️ Road','roadmap'],['🛰️ Satellite','satellite']].map(([label,val])=>(
+            <button key={val} onClick={()=>setMaptype(val)}
+              style={{background:maptype===val?'#059669':'rgba(255,255,255,0.92)',
+                color:maptype===val?'#fff':C.muted,
+                border:`1px solid ${maptype===val?'#059669':C.border}`,
+                borderRadius:14,padding:'5px 10px',fontFamily:'Inter,sans-serif',
+                fontSize:10,fontWeight:600,cursor:'pointer',boxShadow:'0 1px 4px rgba(0,0,0,.15)'}}>
               {label}
             </button>
           ))}
         </div>
       )}
 
-      {/* Google Maps Embed iframe */}
-      {mode==="google"&&embedUrl&&(
-        <iframe
-          title="Namma Jaga Map"
-          src={embedUrl}
-          width="100%"
-          height={height}
-          style={{border:0,display:"block"}}
-          allowFullScreen
-          loading="lazy"
-          referrerPolicy="no-referrer-when-downgrade"
-        />
+      {/* Google Maps JS API div */}
+      {mode==='google'&&apiKey&&(
+        <>
+          {!ready&&(
+            <div style={{height,display:'flex',alignItems:'center',justifyContent:'center',
+              background:'#E8EEF4',color:C.muted,fontFamily:'Inter,sans-serif',fontSize:12}}>
+              Loading map…
+            </div>
+          )}
+          <div ref={mapRef} style={{width:'100%',height,display:ready?'block':'none'}}/>
+        </>
       )}
 
       {/* SVG India Map fallback */}
-      {(mode==="svg"||!embedUrl)&&(
-        <IndiaMap
-          pins={pins}
-          height={height}
-          onStateClick={onStateClick}
-          selectedState={selectedState}
-        />
+      {(mode==='svg'||!apiKey)&&(
+        <IndiaMap pins={pins} height={height} onStateClick={onStateClick} selectedState={selectedState}/>
       )}
     </div>
   );
 }
-
 
 function Ring({score,label,size=72}){
   const [a,setA]=useState(0);
@@ -2306,7 +2476,8 @@ Each object must have: location, district, state, current_price_sqft, expected_c
       const cacheKey="screener_"+[f.city,f.radius,f.minCagr,f.maxPrice,f.minInfra,f.maxRisk].join("_").toLowerCase().replace(/[^a-z0-9_]/g,"");
       const res=await fetch(API_ENDPOINT,{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:5500,temperature:0,messages:[{role:"user",content:prompt}],cacheKey,cacheType:"screener"}),
+        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,temperature:0,system:[{type:"text",text:SYS_FAST,cache_control:{type:"ephemeral"}}],
+          messages:[{role:"user",content:prompt}],cacheKey,cacheType:"screener"}),
       });
       const d=await res.json();
       if(d.error){setError("API: "+d.error.message);setLoading(false);return;}
@@ -2385,7 +2556,7 @@ Each object must have: location, district, state, current_price_sqft, expected_c
   );
 }
 
-const SYS=`You are Namma Jaga AI — India's most trusted AI-powered real estate intelligence platform at nammajaga.com.
+const SYS_FAST=`You are Namma Jaga AI — India's most trusted AI-powered real estate intelligence platform at nammajaga.com.
 Today's date is ${new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}.
 
 Analyze the given Indian location. Return ONLY a raw JSON object starting with { and ending with }. No markdown, no fences.
@@ -2408,75 +2579,38 @@ Gachibowli (Hyderabad): infrastructure:80, population:78, economic:88, connectiv
 Hinjewadi (Pune): infrastructure:72, population:70, economic:80, connectivity:68, urban_expansion:75, market_momentum:74, scarcity:65, risk:35, catalyst:68
 Dholera (Gujarat): infrastructure:60, population:30, economic:65, connectivity:55, urban_expansion:90, market_momentum:72, scarcity:40, risk:55, catalyst:90
 
-SCORING CONSISTENCY: For ALL other localities not in the anchor table above — before assigning any sub-score, state the specific observable fact that drives it. Each sub-score must follow directly from a named, verifiable fact. Round numbers (50, 60, 70, 80) suggest estimation — use specific integers to show actual reasoning.
+SCORING CONSISTENCY: Use specific non-round integers. Each sub-score must follow a named, verifiable fact.
 
-CRITICAL REQUIREMENTS:
-1. news_signals: Include ALL known government signals — CM/Minister/PM statements, proposed airports, metro extensions, highway approvals, budget allocations, industrial zones, court orders. MUST include any upcoming civic projects that will INCREASE or DECREASE the score.
-2. civic_grievances: Based on your knowledge, list REAL known grievances for this area (waterlogging, traffic, power cuts, encroachment, pollution).
-3. price_history: Provide approximate price per sqft for last 5-10 years (use realistic market knowledge).
-4. comparable_projects: Each must include a Google Maps search link in format: https://www.google.com/maps/search/PROJECT+NAME+LOCALITY+CITY
-
-Required JSON keys:
-location_name, state, district, current_land_price,
-growth_score (int — your best independent estimate; note this is cross-checked client-side against a deterministic formula applied to your sub-scores below, so make sure the sub-scores honestly reflect your reasoning rather than working backward from a target headline number),
-risk_score (int), infrastructure_score (int), population_score (int),
-economic_score (int), connectivity_score (int), urban_expansion_score (int),
-market_momentum_score (int), scarcity_score (int), catalyst_score (int),
-forecast_2yr, forecast_5yr, forecast_10yr, expected_cagr, confidence_level, growth_zone,
-growth_drivers (array 5 strings), major_risks (array 4 strings),
-recommendation ("Buy Now"|"Accumulate"|"Watchlist"|"Hold"|"Avoid"),
-investment_thesis (string),
-trajectory_profile (object: {
-  current_stage: "Early Discovery"|"Rising"|"Established"|"Maturing"|"Saturated",
-  historical_mirror: "which specific famous locality at which specific year does this place resemble right now, and why — e.g. 'Electronic City in 2010: similar IT absorption rate, similar connectivity gap, similar price band'",
-  future_trajectory: "which locality does this place most likely become in 10 years and why",
-  price_when_mirror_was_here: "approximate price of the historical mirror locality at that reference year",
-  price_of_mirror_today: "approximate price of that same historical mirror locality today",
-  growth_multiple_achieved: "how many times the historical mirror grew from then to now — e.g. '4x in 12 years'",
-  investor_window: "Early-Stage Opportunity"|"Active Appreciation Window"|"Late-Stage Entry"|"Post-Peak"
-}),
-similar_to (string — keep for backward compatibility, same as trajectory_profile.historical_mirror summary),
-similarity_score (string),
-locality_insight (string — REQUIRED: explain what specific facts drove your scoring, and if you deviated from any anchor table value, state exactly why),
-lat (number), lng (number), sentiment_score (int), sentiment_summary (string),
-news_signals (array 4 objects: {headline, type (BULLISH|BEARISH|CATALYST|NEUTRAL), impact, price_impact, is_upcoming_civic (boolean)}),
-comparable_projects (array of 2-3 objects: {name (string), rate_sqft (string e.g. "₹7,500/sqft"), maps_link (string)}),
-civic_grievances (array of 3-5 strings — real known issues for this area),
-upcoming_civic_projects (array of 2-4 objects: {project, status, expected_completion, score_impact ("+5"|"-3" etc), price_impact}),
-price_history (array of objects: {year (int), price_sqft (int)} — last 8-10 years),
-economic_absorption (object: {
-  plan_vs_reality_gap: "High"|"Medium"|"Low" — how much do the plans (infra, smart city, capital city) outpace actual on-ground economic activity?
-  current_jobs_created: "approximate number of actual jobs created so far vs the grand plan — be specific, e.g. '~8,000 jobs vs 500,000 planned for Dholera SIR'",
-  private_sector_confidence: "High"|"Medium"|"Low"|"Absent" — are private companies actually investing or just government-funded?
-  livability_today: "Is the area currently livable? Are amenities, utilities, shops, schools actually present or still years away?",
-  absorption_risk: "What happens to property if the jobs/plan don't materialize? Concrete risk.",
-  verdict: "Speculative play"|"Emerging fundamentals"|"Strong absorption"|"Oversupplied"
-}),
-ripple_signal (object: {
-  overflow_from: "which saturating hub(s) is driving capital toward this locality — e.g. 'Whitefield (avg ₹18,000/sqft) pushing buyers toward Hoskote'",
-  distance_from_hub: "approximate km from that hub",
-  price_gap: "current price gap between hub and this locality — e.g. '3x cheaper than Whitefield'",
-  absorption_timeline: "estimated years before this locality reaches hub-like pricing — e.g. '5-8 years'",
-  catalysts_needed: "what specific things would accelerate this — e.g. 'metro connectivity, SH-35 widening, IT park announcement'"
-}),
-water_quality_note (string),
-traffic_intelligence (object: {
-  peak_hour_congestion: "Severe/High/Moderate/Low",
-  peak_hours: "e.g. 8-10am and 6-9pm",
-  main_bottlenecks: [array of 2-3 specific road/junction names with issue],
-  crowd_density: "Very High/High/Moderate/Low",
-  population_density_sqkm: integer estimate,
-  infrastructure_vs_population: "Adequate/Strained/Overwhelmed",
-  metro_bus_connectivity: "Excellent/Good/Average/Poor",
-  parking_situation: "Easy/Moderate/Difficult/Very Difficult",
-  weekend_vs_weekday: string (1 sentence),
-  future_relief: string (1 sentence),
-  investor_impact: string (1 sentence)
-})
-
-Scoring: Infrastructure 25%, Population 20%, Economic 20%, Connectivity 15%, Urban 10%, Momentum 5%, Scarcity 5%.
-Zones: 90-100 Mega Growth, 80-89 Emerging Hot, 65-79 Growth, 50-64 Stable, <50 High Risk.
+Return ONLY these fields (keep values concise):
+growth_score (int), risk_score (int),
+infrastructure_score (int), population_score (int), economic_score (int),
+connectivity_score (int), urban_expansion_score (int), market_momentum_score (int),
+scarcity_score (int), catalyst_score (int),
+current_land_price (string "₹X–Y/sqft"), expected_cagr (string), confidence_level ("High"|"Medium"|"Low"),
+growth_zone (string), recommendation ("Buy Now"|"Accumulate"|"Watchlist"|"Hold"|"Avoid"),
+investment_thesis (string — 2 sentences max),
+growth_drivers (array of 5 strings — concise), major_risks (array of 4 strings — concise),
+location_name (string), state (string),
+lat (number — 4 decimal places min e.g. 12.9716), lng (number — 4 decimal places min e.g. 77.5946),
+sentiment_score (int), yoy_appreciation_pct (number), forecast_2yr (string), forecast_5yr (string),
+trajectory_profile (object: {current_stage:"Early Discovery"|"Rising"|"Established"|"Maturing"|"Saturated", investor_window:"Early-Stage Opportunity"|"Active Appreciation Window"|"Late-Stage Entry"|"Post-Peak"}),
+locality_insight (string — 2-3 sentences: what drove your scoring)
 `;
+
+const SYS_DETAIL=`You are Namma Jaga AI. Given a location name, return supplementary real estate intelligence as JSON. Return ONLY raw JSON, no markdown.
+
+Return ONLY these fields:
+price_history (array of {year:int, price_sqft:int} — last 8 years),
+comparable_projects (array of 2-3 {name:string, rate_sqft:string "₹X/sqft", maps_link:string}),
+news_signals (array of 4 {headline:string, type:"BULLISH"|"BEARISH"|"CATALYST"|"NEUTRAL", impact:string, price_impact:string, is_upcoming_civic:boolean}),
+upcoming_civic_projects (array of 2-3 {project:string, status:string, expected_completion:string, score_impact:string, price_impact:string}),
+economic_absorption ({plan_vs_reality_gap:"High"|"Medium"|"Low", current_jobs_created:string, private_sector_confidence:"High"|"Medium"|"Low"|"Absent", livability_score:int, liveability_notes:string}),
+civic_grievances (array of 3 strings),
+elder_friendliness (string), kid_friendliness (string),
+rental_yield_pct (number), similar_to (string),
+ripple_effect_zones (array of 2-3 {zone:string, distance_km:number, relation:string, growth_potential:string})
+`;
+
 
 // ── Ambiguous locality names — same name exists in multiple parts of a city/state
 // When a user searches one of these, we ask which one they mean before running analysis.
@@ -2532,7 +2666,8 @@ function AnalyzeTab({initialQuery="",onClear}){
   const [report,setReport]=useState(null);
   const [pins,setPins]=useState([]);
   const [error,setError]=useState("");
-  const [disambigOptions,setDisambigOptions]=useState([]); // populated when location name is ambiguous
+  const [disambigOptions,setDisambigOptions]=useState([]);
+  const [detailLoading,setDetailLoading]=useState(false); // true while phase 2 background fetch runs
   const ranOnce=useRef(false);
 
   useEffect(()=>{
@@ -2551,37 +2686,62 @@ function AnalyzeTab({initialQuery="",onClear}){
   const doAnalyze=async(query)=>{
     const loc=(query||q).trim();
     if(!loc) return;
-    // Check for ambiguous locality names before running the full analysis
     const ambig = checkAmbiguity(loc);
     if(ambig.length > 0 && disambigOptions.length === 0) {
-      setDisambigOptions(ambig);
-      return; // wait for user to pick which one they mean
+      setDisambigOptions(ambig); return;
     }
-    setDisambigOptions([]); // clear once resolved
-    setLoading(true);setReport(null);setError("");setPins([]);setStreamChars(0);
-    try{
-      const cacheKey="analyze_"+loc.toLowerCase().trim().replace(/[^a-z0-9]+/g,"_");
-      const res=await fetch(API_ENDPOINT,{
-        method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:5500,temperature:0,system:SYS,
+    setDisambigOptions([]);
+    setLoading(true); setReport(null); setError(""); setPins([]); setStreamChars(0);
+
+    const cacheKey = "analyze_"+loc.toLowerCase().trim().replace(/[^a-z0-9]+/g,"_");
+
+    // ── Phase 1: Fast call — above-fold data, ~400 tokens output ─────────────
+    try {
+      const res = await fetch(API_ENDPOINT, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          model:"claude-sonnet-4-6", max_tokens:1200, temperature:0,
+          system:[{type:"text",text:SYS_FAST,cache_control:{type:"ephemeral"}}],
           messages:[{role:"user",content:`Analyze for land investment: ${loc}, India`}],
-          cacheKey,cacheType:"analyze"}),
+          cacheKey, cacheType:"analyze"
+        }),
       });
-      const raw=await res.text();
-      let d=null; try{ d=JSON.parse(raw); }catch{}
-      if(!res.ok){
-        const msg=d?.error?.message||raw.slice(0,200)||"No response body.";
-        setError(`Request failed (HTTP ${res.status}). ${msg}`);setLoading(false);return;
-      }
-      if(d?.error){setError("API: "+d.error.message);setLoading(false);return;}
-      const text=d?.content?.map(b=>b.text||"").join("")||"";
-      const parsed=parseJSON(text);
-      if(parsed&&!Array.isArray(parsed)){
-        setReport(parsed);
-        if(parsed.lat&&parsed.lng) setPins([{...parsed,location:parsed.location_name}]);
-      } else setError("Parse failed. Raw: "+text.slice(0,300));
-    }catch(e){setError("Error: "+e.message);}
-    setLoading(false);
+      const raw = await res.text();
+      let d = null; try{ d=JSON.parse(raw); }catch{}
+      if(!res.ok){ setError(`Request failed (HTTP ${res.status}). ${d?.error?.message||raw.slice(0,200)}`); setLoading(false); return; }
+      if(d?.error){ setError("API: "+d.error.message); setLoading(false); return; }
+      const text = d?.content?.map(b=>b.text||"").join("")||"";
+      const parsed = parseJSON(text);
+      if(!parsed||Array.isArray(parsed)){ setError("Parse failed. Raw: "+text.slice(0,300)); setLoading(false); return; }
+
+      // Show above-fold immediately
+      setReport(parsed);
+      setLoading(false);
+      if(parsed.lat&&parsed.lng) setPins([{...parsed,location:parsed.location_name}]);
+
+      // ── Phase 2: Detail call — runs in background while user reads Phase 1 ─
+      setDetailLoading(true);
+      const detailCacheKey = "detail_"+loc.toLowerCase().trim().replace(/[^a-z0-9]+/g,"_");
+      fetch(API_ENDPOINT, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          model:"claude-sonnet-4-6", max_tokens:1800, temperature:0,
+          system:[{type:"text",text:SYS_DETAIL,cache_control:{type:"ephemeral"}}],
+          messages:[{role:"user",content:`Location: ${loc}, India. State: ${parsed.state||""}. Growth score: ${parsed.growth_score}.`}],
+          cacheKey: detailCacheKey, cacheType:"analyze"
+        }),
+      }).then(r=>r.text()).then(raw2=>{
+        let d2=null; try{ d2=JSON.parse(raw2); }catch{}
+        if(!d2?.content) return;
+        const text2 = d2.content.map(b=>b.text||"").join("");
+        const detail = parseJSON(text2);
+        if(detail&&!Array.isArray(detail)){
+          setReport(prev => prev ? {...prev, ...detail} : prev);
+        }
+        setDetailLoading(false);
+      }).catch(()=>{ setDetailLoading(false); }); // detail failure is non-fatal
+
+    } catch(e){ setError("Error: "+e.message); setLoading(false); }
   };
 
   return(
@@ -2665,7 +2825,17 @@ function AnalyzeTab({initialQuery="",onClear}){
       {report&&(
         <>
           <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark}}>🗺️ {report.location_name} on India Growth Map</div>
-          <MapView pins={pins} selectedState={report.state} height={270} focusLat={report.lat} focusLng={report.lng} focusZoom={5}/>
+          <MapView pins={pins} selectedState={report.state} height={270} focusLat={report.lat} focusLng={report.lng} focusZoom={14} localityName={q}/>
+          {detailLoading&&(
+            <div style={{display:"flex",alignItems:"center",gap:8,background:"#EFF6FF",
+              borderRadius:8,padding:"8px 12px",border:"1px solid #BFDBFE",marginTop:4}}>
+              <div style={{width:14,height:14,border:"2px solid #2563EB",borderTopColor:"transparent",
+                borderRadius:"50%",animation:"spin 0.8s linear infinite",flexShrink:0}}/>
+              <span style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#1D4ED8",fontWeight:600}}>
+                Loading price history, comparable projects & more…
+              </span>
+            </div>
+          )}
           <ReportCard data={report} pins={pins}/>
         </>
       )}
@@ -3756,7 +3926,8 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
     try {
       const res = await fetch(API_ENDPOINT, {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({model:"claude-sonnet-4-6", max_tokens:8000, temperature:0,
+        body: JSON.stringify({model:"claude-sonnet-4-6", max_tokens:4000, temperature:0,
+          system:[{type:"text",text:SYS_FAST,cache_control:{type:"ephemeral"}}],
           messages:[{role:"user",content:prompt}], cacheKey, cacheType:"pricer"}),
       });
       const d = await res.json();
@@ -4918,7 +5089,8 @@ function AppInner(){
 
   return(
     <div style={{minHeight:"100vh",background:C.bg}}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Serif+Kannada:wght@900&display=swap');`}</style>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Serif+Kannada:wght@900&display=swap');`}</style>
       <div style={{position:"sticky",top:0,zIndex:1000,boxShadow:"0 2px 12px rgba(0,0,0,0.18)"}}>
         <div style={{background:"#fff",padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:"1px solid #E2E8F0"}}>
           {/* Logo — tappable, goes to Home */}
