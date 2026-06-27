@@ -2748,64 +2748,130 @@ function AnalyzeTab({initialQuery="",onClear}){
     };
 
     try{
-      // ── Phase 1: Core scores, pricing, investment thesis ─────────────────
+      // ── Phase 1: Core intelligence — scores, pricing, thesis, drivers ─────
       const p1=await call(1,
-        `Analyze "${loc}, India" for land/property investment. Return JSON with ONLY these fields:
-location_name, state, district, lat, lng, current_land_price, growth_score, risk_score,
-infrastructure_score, population_score, economic_score, connectivity_score,
-urban_expansion_score, market_momentum_score, scarcity_score, catalyst_score,
-forecast_2yr, forecast_5yr, forecast_10yr, expected_cagr, confidence_level,
-growth_zone, recommendation, investment_thesis, growth_drivers, major_risks,
-locality_insight, sentiment_score, sentiment_summary, similar_to, similarity_score`,
-        2000
+        `You are analyzing "${loc}, India" for a serious land/property investor.
+Follow ALL scoring anchors, pricing anchors, and field definitions from your system instructions exactly.
+Return a raw JSON object with these fields. Be DETAILED and SPECIFIC — investors make real decisions from this:
+
+location_name, state, district,
+lat (4+ decimal places), lng (4+ decimal places),
+current_land_price (exact ₹min–max/sqft from anchor table),
+growth_score (int), risk_score (int),
+infrastructure_score (int), population_score (int), economic_score (int),
+connectivity_score (int), urban_expansion_score (int),
+market_momentum_score (int), scarcity_score (int), catalyst_score (int),
+forecast_2yr (string, specific range), forecast_5yr (string), forecast_10yr (string),
+expected_cagr (string e.g. "12–18%"), confidence_level, growth_zone,
+recommendation ("Buy Now"|"Accumulate"|"Watchlist"|"Hold"|"Avoid"),
+
+investment_thesis: MINIMUM 4-5 sentences. Cover: (1) what makes this location unique, (2) who the buyer is, (3) what the specific risk is, (4) what the upside catalyst is, (5) the holding period advice,
+
+growth_drivers: array of 5 strings, each 1-2 sentences with SPECIFIC facts (name the actual roads, companies, projects),
+major_risks: array of 4 strings, each specific and named (not generic),
+locality_insight: 3-4 sentences explaining your scoring decisions with specific facts,
+sentiment_score (int 1-100), sentiment_summary (string),
+similar_to (string), similarity_score (string)`,
+        3500
       );
       if(!p1||Array.isArray(p1)){setError("Phase 1 parse failed");setLoading(false);return;}
       setReport(p1);
       if(p1.lat&&p1.lng) setPins([{...p1,location:p1.location_name}]);
       setStreamChars(1);
 
-      // ── Phase 2: News signals, civic projects, comparable projects ────────
+      // ── Phase 2: Market signals + projects + comparables ──────────────────
       const p2=await call(2,
-        `For "${loc}, India" return JSON with ONLY these fields (use your real knowledge, be specific and detailed):
-news_signals (array of 4 objects: {headline, type: BULLISH|BEARISH|CATALYST|NEUTRAL, impact, price_impact, is_upcoming_civic: boolean}),
-upcoming_civic_projects (array of 3-4 objects: {project, status, expected_completion, score_impact, price_impact}),
-comparable_projects (array of 3 objects: {name, rate_sqft, maps_link})`,
-        2000
+        `You are a real estate intelligence analyst. For "${loc}, India", return a raw JSON with these fields.
+Use REAL knowledge — name specific projects, roads, government orders, builder names.
+
+news_signals: array of 4 objects. Each must have:
+  headline (specific, named — e.g. "BBMP approves ₹240Cr widening of XYZ Road"),
+  type (BULLISH|BEARISH|CATALYST|NEUTRAL),
+  impact (2-3 sentences explaining the SPECIFIC effect on this locality),
+  price_impact (e.g. "+5% to +8% over 18 months"),
+  is_upcoming_civic (boolean)
+
+upcoming_civic_projects: array of 4 objects. Each must have:
+  project (specific named project),
+  status (e.g. "Land acquisition ongoing", "DPR approved", "Under construction"),
+  expected_completion (year or "TBD"),
+  score_impact (e.g. "+6 to growth score upon completion"),
+  price_impact (specific % range)
+
+comparable_projects: array of 3 objects with:
+  name (real project name),
+  rate_sqft (e.g. "₹7,500–9,000/sqft"),
+  maps_link ("https://www.google.com/maps/search/PROJECT+NAME+LOCALITY")`,
+        3000
       );
       if(p2&&!Array.isArray(p2)) setReport(r=>({...r,...p2}));
       setStreamChars(2);
 
-      // ── Phase 3: Traffic, crowd, water quality, civic grievances ──────────
+      // ── Phase 3: Traffic + water + civic grievances (full detail) ─────────
       const p3=await call(3,
-        `For "${loc}, India" return JSON with ONLY these fields (be very specific and detailed — users rely on this for decisions):
-traffic_intelligence (object: {
-  peak_hour_congestion: "Severe|High|Moderate|Low",
-  peak_hours: "specific time windows e.g. 8-10am and 6-9pm",
-  main_bottlenecks: [array of 3 specific road/junction names with exact issue],
+        `You are a civic intelligence analyst. For "${loc}, India", return a raw JSON with these fields.
+Be VERY specific — name actual roads, junctions, pipe networks, known local issues. Users rely on this.
+
+traffic_intelligence: object with ALL of these keys:
+  peak_hour_congestion: "Severe|High|Moderate|Low" (be honest based on ground reality),
+  peak_hours: specific windows e.g. "8:00–10:30am and 6:00–9:30pm on weekdays",
+  main_bottlenecks: array of 3 NAMED junctions/roads with specific issue per item
+    e.g. ["Silk Board Junction: merging of 6 arterial roads causes 40-60 min delays",
+          "Marathahalli Bridge: single carriageway over Varthur Lake — key chokepoint"],
   crowd_density: "Very High|High|Moderate|Low",
-  population_density_sqkm: integer,
+  population_density_sqkm: realistic integer estimate,
   infrastructure_vs_population: "Adequate|Strained|Overwhelmed",
-  metro_bus_connectivity: "Excellent|Good|Average|Poor",
+  metro_bus_connectivity: "Excellent|Good|Average|Poor" with brief reason,
   parking_situation: "Easy|Moderate|Difficult|Very Difficult",
-  weekend_vs_weekday: "one specific sentence about difference",
-  future_relief: "one sentence on upcoming road/metro relief projects",
-  investor_impact: "one sentence on how traffic affects property value here"
-}),
-water_quality_note (string — specific details: source, quality, TDS levels if known, seasonal issues, borewell vs BWSSB/corporation supply, any contamination reports),
-civic_grievances (array of 4-5 specific strings — real known issues: waterlogging spots, power cut frequency, garbage, encroachment, specific roads/areas affected)`,
-        2500
+  weekend_vs_weekday: one sentence on the specific difference for THIS locality,
+  future_relief: one sentence naming actual planned relief — road widening, flyover, metro station etc,
+  investor_impact: one sentence — how does traffic specifically affect property value or buyer decision here
+
+water_quality_note: 3-4 sentences covering ALL of: primary water source (BWSSB/HMWSSB/corporation vs borewell),
+  quality and TDS range if known, seasonal issues (summer scarcity, monsoon flooding near pipes),
+  any contamination history or fluoride/hardness issues specific to this locality.
+
+civic_grievances: array of 5 specific strings. Each must name a SPECIFIC location, street, or known issue.
+  Bad example: "Traffic congestion"
+  Good example: "Severe waterlogging at Kundanahalli Gate during monsoons — knee-deep flooding reported Aug 2023, BBMP action still pending"`,
+        3000
       );
       if(p3&&!Array.isArray(p3)) setReport(r=>({...r,...p3}));
       setStreamChars(3);
 
-      // ── Phase 4: Price history, ripple signal, economic absorption, trajectory ─
+      // ── Phase 4: History + ripple + absorption + trajectory ───────────────
       const p4=await call(4,
-        `For "${loc}, India" return JSON with ONLY these fields:
-price_history (array of 8-10 objects: {year: int, price_sqft: int} — from ~2015 to 2025, be realistic),
-ripple_signal (object: {overflow_from, distance_from_hub, price_gap, absorption_timeline, catalysts_needed}),
-economic_absorption (object: {plan_vs_reality_gap: "High|Medium|Low", current_jobs_created, private_sector_confidence: "High|Medium|Low|Absent", livability_today, absorption_risk, verdict: "Speculative play|Emerging fundamentals|Strong absorption|Oversupplied"}),
-trajectory_profile (object: {current_stage, historical_mirror, future_trajectory, price_when_mirror_was_here, price_of_mirror_today, growth_multiple_achieved, investor_window})`,
-        2500
+        `You are a real estate research analyst. For "${loc}, India", return a raw JSON with these fields.
+Use realistic market knowledge — don't use round numbers, be specific.
+
+price_history: array of 9-10 objects {year: int, price_sqft: int} from 2015 to 2025.
+  Reflect real market cycles — 2020 COVID dip, 2022-23 post-COVID recovery, 2024-25 current.
+  Use integers, not round numbers (e.g. 4200 not 4000).
+
+ripple_signal: object with:
+  overflow_from: specific hub locality name and current avg price e.g. "Whitefield (avg ₹18,000/sqft)",
+  distance_from_hub: "X km from [hub name]",
+  price_gap: specific price gap e.g. "2.8x cheaper than Whitefield right now",
+  absorption_timeline: realistic estimate e.g. "6–9 years to reach hub-level pricing",
+  catalysts_needed: 2-3 specific things that would accelerate this e.g. "Metro station within 500m, IT park on ORR, SH-35 6-laning"
+
+economic_absorption: object with:
+  plan_vs_reality_gap: "High|Medium|Low",
+  current_jobs_created: specific number vs plan e.g. "~45,000 jobs within 3km vs 200,000 planned",
+  private_sector_confidence: "High|Medium|Low|Absent",
+  livability_today: 2 sentences on actual ground reality — schools, hospitals, daily needs,
+  absorption_risk: 1-2 sentences on what happens if plans don't materialize,
+  verdict: "Speculative play|Emerging fundamentals|Strong absorption|Oversupplied"
+
+trajectory_profile: object with:
+  current_stage: "Early Discovery|Rising|Established|Maturing|Saturated",
+  historical_mirror: specific comparison e.g. "Resembles Whitefield in 2010: similar IT absorption, ₹3,500–5,000/sqft, pre-metro era",
+  future_trajectory: what this place becomes in 10 years and why,
+  price_when_mirror_was_here: price at that reference year,
+  price_of_mirror_today: current price of that reference locality,
+  growth_multiple_achieved: e.g. "4.2x in 12 years",
+  investor_window: "Early-Stage Opportunity|Active Appreciation Window|Late-Stage Entry|Post-Peak"`,
+        3500
       );
       if(p4&&!Array.isArray(p4)) setReport(r=>({...r,...p4}));
       setStreamChars(4);
