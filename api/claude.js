@@ -28,13 +28,16 @@ export default async function handler(req, res) {
     const fullCacheKey = cacheKey ? `bharat-land:${cacheType || 'generic'}:${cacheKey}` : null;
     const ttl = TTL[cacheType] || TTL.analyze;
 
-    // Cache check — now inside the top-level try/catch so any Redis
-    // exception produces a clean JSON error instead of crashing the function.
+    // Cache check
     if (fullCacheKey) {
       const cached = await getCached(fullCacheKey);
       if (cached) {
-        return res.status(200).json({ ...cached, _cacheHit: true });
+        console.log(`[NJ] CACHE HIT: ${fullCacheKey}`);
+        // cached may be a string (Upstash auto-parses) or object
+        const obj = typeof cached === 'string' ? JSON.parse(cached) : cached;
+        return res.status(200).json({ ...obj, _cacheHit: true });
       }
+      console.log(`[NJ] CACHE MISS: ${fullCacheKey}`);
     }
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -57,9 +60,9 @@ export default async function handler(req, res) {
       data.stop_reason !== 'max_tokens'
     ) {
       // Cache write failure should never surface to the user — fire and forget
-      setCached(fullCacheKey, data, ttl).catch(e =>
-        console.error('Cache write error (non-fatal):', e.message)
-      );
+      setCached(fullCacheKey, data, ttl)
+        .then(() => console.log(`[NJ] CACHE WRITE: ${fullCacheKey} (TTL: ${ttl}s)`))
+        .catch(e => console.error('Cache write error:', e.message));
     }
 
     // Log token usage to Vercel function logs — view at vercel.com → project → logs

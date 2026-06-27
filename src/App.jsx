@@ -955,7 +955,7 @@ function loadGoogleMaps(apiKey, cb) {
     _gmapsCallbacks = [];
   };
   const s = document.createElement('script');
-  s.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&callback=__njGmapsReady&libraries=visualization`;
+  s.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&callback=__njGmapsReady&libraries=places,visualization`;
   s.async = true; s.defer = true;
   document.head.appendChild(s);
 }
@@ -2652,6 +2652,46 @@ Scoring: Infrastructure 25%, Population 20%, Economic 20%, Connectivity 15%, Urb
 Zones: 90-100 Mega Growth, 80-89 Emerging Hot, 65-79 Growth, 50-64 Stable, <50 High Risk.
 `;
 
+// ── Locality slug normaliser — fuzzy match for cache keys ────────────────────
+function normalizeLocalitySlug(loc) {
+  let s = loc.toLowerCase().trim();
+
+  // 1. City aliases
+  s = s.replace(/\bbanglore\b|\bbangalore\b|\bblr\b/g,'bengaluru');
+  s = s.replace(/\bbombay\b/g,'mumbai');
+  s = s.replace(/\bmadras\b/g,'chennai');
+  s = s.replace(/\bcalcutta\b/g,'kolkata');
+
+  // 2. Strip trailing city
+  s = s.replace(/[,\s]+(bengaluru|mumbai|hyderabad|chennai|pune|delhi|kolkata|ahmedabad|surat|india)\s*$/,'').trim();
+
+  // 3. Locality typo corrections — word boundaries, longest first
+  const fixes = [
+    [/\bmalleswaram\b/g,   'malleshwaram'],
+    [/\bmalleshwara\b/g,   'malleshwaram'],
+    [/\bmalleswara\b/g,    'malleshwaram'],
+    [/\bmarathalli\b/g,    'marathahalli'],
+    [/\bkoramangal\b/g,    'koramangala'],
+    [/\bsarjapura\b/g,     'sarjapur'],
+    [/\bindira nagar\b/g,  'indiranagar'],
+    [/\bwhitfield\b/g,     'whitefield'],
+    [/\bwhitefeild\b/g,    'whitefield'],
+    [/\bbellndur\b/g,      'bellandur'],
+    [/\bpanathuru\b/g,     'panathur'],
+    [/\bgachi bowli\b/g,   'gachibowli'],
+    [/\bhinjwadi\b/g,      'hinjewadi'],
+    [/\bkhargar\b/g,       'kharghar'],
+    [/hi tech city|hitech city|hitec city/g, 'hitec_city'],
+    [/electronic city|\becity\b|\be city\b/g, 'electronic_city'],
+    [/\bjp nagar\b/g,      'jp_nagar'],
+    [/\bhsr layout\b/g,    'hsr_layout'],
+  ];
+  for(const [rx,rep] of fixes) s = s.replace(rx, rep);
+
+  // 4. Collapse to slug
+  return s.replace(/[^a-z0-9_]+/g,'_').replace(/^_+|_+$/g,'').replace(/_+/g,'_');
+}
+
 // ── Ambiguous locality names — same name exists in multiple parts of a city/state
 // When a user searches one of these, we ask which one they mean before running analysis.
 // Extend this list as more duplicates are discovered. Format: name → array of contexts.
@@ -2700,13 +2740,137 @@ function checkAmbiguity(query) {
   return [];
 }
 
+// ── Places Autocomplete Input ─────────────────────────────────────────────────
+// Calls /api/maps (server-side proxy) — Google key never reaches the browser.
+// Falls back gracefully to plain text input if the proxy is unavailable.
+function PlacesSearchInput({value, onChange, onSelect, onSearch, loading, placeholder}) {
+  const inputRef       = React.useRef(null);
+  const [suggestions, setSuggestions] = React.useState([]);
+  const [showDrop, setShowDrop]       = React.useState(false);
+  const [fetching, setFetching]       = React.useState(false);
+  const debounceRef    = React.useRef(null);
+
+  // Fetch autocomplete suggestions from our server-side proxy
+  const fetchSuggestions = React.useCallback(async (q) => {
+    if(q.trim().length < 2){ setSuggestions([]); setShowDrop(false); return; }
+    setFetching(true);
+    try {
+      const res  = await fetch(`/api/maps?type=autocomplete&q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      setSuggestions(data.predictions || []);
+      setShowDrop((data.predictions||[]).length > 0);
+    } catch(e) {
+      setSuggestions([]); setShowDrop(false);
+    }
+    setFetching(false);
+  }, []);
+
+  const handleChange = (val) => {
+    onChange(val);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => fetchSuggestions(val), 220);
+  };
+
+  // User picks a suggestion → geocode it to get coords + canonical name
+  const handleSelect = async (pred) => {
+    onChange(pred.description);
+    setShowDrop(false);
+    setSuggestions([]);
+    try {
+      const res  = await fetch(`/api/maps?type=geocode&place_id=${encodeURIComponent(pred.place_id)}`);
+      const data = await res.json();
+      if(data.result) onSelect({ ...data.result, placeId: data.result.place_id });
+      else onSelect({ placeId: pred.place_id, display: pred.description });
+    } catch(e) {
+      onSelect({ placeId: pred.place_id, display: pred.description });
+    }
+  };
+
+  // Enter without picking → geocode the raw text
+  const handleSearch = async () => {
+    setShowDrop(false);
+    if(!value.trim()) return;
+    // If user typed and pressed Enter without selecting, try geocoding the text
+    try {
+      const res  = await fetch(`/api/maps?type=geocode&q=${encodeURIComponent(value)}`);
+      const data = await res.json();
+      if(data.result) onSelect({ ...data.result, placeId: data.result.place_id });
+    } catch(e) { /* proceed with raw text */ }
+    onSearch();
+  };
+
+  return (
+    <div style={{position:'relative', width:'100%'}}>
+      <div style={{display:'flex', gap:7}}>
+        <div style={{position:'relative', flex:1}}>
+          <span style={{position:'absolute', left:9, top:'50%', transform:'translateY(-50%)',
+            fontSize:13, pointerEvents:'none', opacity:0.5}}>📍</span>
+          <input
+            ref={inputRef}
+            value={value}
+            onChange={e => handleChange(e.target.value)}
+            onKeyDown={e => { if(e.key==='Enter') handleSearch(); if(e.key==='Escape') setShowDrop(false); }}
+            onFocus={() => suggestions.length > 0 && setShowDrop(true)}
+            onBlur={() => setTimeout(() => setShowDrop(false), 150)}
+            placeholder={placeholder||'e.g. Whitefield, Bengaluru or Sohna, Haryana'}
+            style={{...IS, width:'100%', paddingLeft:30}}
+          />
+          {fetching&&<span style={{position:'absolute', right:9, top:'50%',
+            transform:'translateY(-50%)', fontSize:11, color:C.muted}}>…</span>}
+        </div>
+        <button onClick={handleSearch} disabled={loading||!value.trim()}
+          style={{background:loading?C.muted:C.navy, color:'#fff', border:'none',
+            borderRadius:8, padding:'0 15px', fontFamily:'Inter,sans-serif',
+            fontSize:12, fontWeight:600, cursor:loading?'not-allowed':'pointer',
+            whiteSpace:'nowrap'}}>
+          {loading ? '…' : 'Analyze →'}
+        </button>
+      </div>
+
+      {/* Dropdown suggestions */}
+      {showDrop&&suggestions.length>0&&(
+        <div style={{position:'absolute', top:'calc(100% + 4px)', left:0, right:0,
+          background:'#fff', border:`1px solid ${C.border}`, borderRadius:10,
+          boxShadow:'0 8px 24px rgba(0,0,0,.12)', zIndex:1000, overflow:'hidden'}}>
+          {suggestions.map((pred, i) => (
+            <div key={pred.place_id}
+              onMouseDown={() => handleSelect(pred)}
+              style={{padding:'10px 14px', cursor:'pointer', borderBottom: i<suggestions.length-1?`1px solid ${C.border}`:'none',
+                display:'flex', flexDirection:'column', gap:2,
+                background: 'transparent',
+                transition:'background .1s'}}
+              onMouseEnter={e => e.currentTarget.style.background='#F8FAFF'}
+              onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+              <div style={{fontFamily:'Inter,sans-serif', fontSize:12, fontWeight:600, color:C.dark}}>
+                📍 {pred.main_text}
+              </div>
+              {pred.secondary&&(
+                <div style={{fontFamily:'Inter,sans-serif', fontSize:10, color:C.muted}}>
+                  {pred.secondary}
+                </div>
+              )}
+            </div>
+          ))}
+          <div style={{padding:'6px 14px', background:'#F8FAFF',
+            fontFamily:'Inter,sans-serif', fontSize:9, color:C.muted,
+            borderTop:`1px solid ${C.border}`}}>
+            Powered by Google Maps
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function AnalyzeTab({initialQuery="",onClear}){
   const [q,setQ]=useState(initialQuery);
+  const [placeData,setPlaceData]=useState(null); // resolved by Places Autocomplete
   const [loading,setLoading]=useState(false);
   const [report,setReport]=useState(null);
   const [pins,setPins]=useState([]);
   const [error,setError]=useState("");
-  const [disambigOptions,setDisambigOptions]=useState([]); // populated when location name is ambiguous
+  const [disambigOptions,setDisambigOptions]=useState([]);
   const ranOnce=useRef(false);
 
   useEffect(()=>{
@@ -2725,12 +2889,23 @@ function AnalyzeTab({initialQuery="",onClear}){
   const doAnalyze=async(query)=>{
     const loc=(query||q).trim();
     if(!loc) return;
-    const ambig=checkAmbiguity(loc);
-    if(ambig.length>0&&disambigOptions.length===0){setDisambigOptions(ambig);return;}
-    setDisambigOptions([]);
-    setLoading(true);setReport(null);setError("");setPins([]);setStreamChars(0);
 
-    const slug=loc.toLowerCase().trim().replace(/[^a-z0-9]+/g,"_");
+    // If no Places data yet, check for ambiguity
+    if(!placeData){
+      const ambig=checkAmbiguity(loc);
+      if(ambig.length>0&&disambigOptions.length===0){setDisambigOptions(ambig);return;}
+    }
+    setDisambigOptions([]);
+    setLoading(true);setReport(null);setError("");setPins([]);setStreamChars(0);setPlaceData(null);
+
+    // ── Cache key: place_id (permanent, canonical) or normalised slug ─────────
+    const slug = placeData?.placeId
+      ? `place_${placeData.placeId}`          // e.g. place_ChIJuS3m0dAOrjsR...
+      : normalizeLocalitySlug(loc);            // fallback for manual entry
+
+    // ── Canonical search string for the AI prompt ──────────────────────────────
+    const aiLoc = placeData?.display || loc;   // use Google's canonical name if available
+
     const call=async(phase,prompt,maxTok)=>{
       const res=await fetch(API_ENDPOINT,{
         method:"POST",headers:{"Content-Type":"application/json"},
@@ -2750,7 +2925,7 @@ function AnalyzeTab({initialQuery="",onClear}){
     try{
       // ── Phase 1: Core intelligence — scores, pricing, thesis, drivers ─────
       const p1=await call(1,
-        `You are analyzing "${loc}, India" for a serious land/property investor.
+        `You are analyzing "${aiLoc}, India" for a serious land/property investor.
 Follow ALL scoring anchors, pricing anchors, and field definitions from your system instructions exactly.
 Return a raw JSON object with these fields. Be DETAILED and SPECIFIC — investors make real decisions from this:
 
@@ -2775,13 +2950,20 @@ similar_to (string), similarity_score (string)`,
         3500
       );
       if(!p1||Array.isArray(p1)){setError("Phase 1 parse failed");setLoading(false);return;}
+      // Inject Places Autocomplete coords if AI returns imprecise ones
+      if(placeData?.lat && placeData?.lng) {
+        const aiLat = parseFloat(String(p1.lat||0));
+        const aiLng = parseFloat(String(p1.lng||0));
+        const hasGoodCoords = String(p1.lat||'').replace(/[^0-9]/g,'').length >= 6;
+        if(!hasGoodCoords) { p1.lat = placeData.lat; p1.lng = placeData.lng; }
+      }
       setReport(p1);
       if(p1.lat&&p1.lng) setPins([{...p1,location:p1.location_name}]);
       setStreamChars(1);
 
       // ── Phase 2: Market signals + projects + comparables ──────────────────
       const p2=await call(2,
-        `You are a real estate intelligence analyst. For "${loc}, India", return a raw JSON with these fields.
+        `You are a real estate intelligence analyst. For "${aiLoc}, India", return a raw JSON with these fields.
 Use REAL knowledge — name specific projects, roads, government orders, builder names.
 
 news_signals: array of 4 objects. Each must have:
@@ -2809,7 +2991,7 @@ comparable_projects: array of 3 objects with:
 
       // ── Phase 3: Traffic + water + civic grievances (full detail) ─────────
       const p3=await call(3,
-        `You are a civic intelligence analyst. For "${loc}, India", return a raw JSON with these fields.
+        `You are a civic intelligence analyst. For "${aiLoc}, India", return a raw JSON with these fields.
 Be VERY specific — name actual roads, junctions, pipe networks, known local issues. Users rely on this.
 
 traffic_intelligence: object with ALL of these keys:
@@ -2841,7 +3023,7 @@ civic_grievances: array of 5 specific strings. Each must name a SPECIFIC locatio
 
       // ── Phase 4: History + ripple + absorption + trajectory ───────────────
       const p4=await call(4,
-        `You are a real estate research analyst. For "${loc}, India", return a raw JSON with these fields.
+        `You are a real estate research analyst. For "${aiLoc}, India", return a raw JSON with these fields.
 Use realistic market knowledge — don't use round numbers, be specific.
 
 price_history: array of 9-10 objects {year: int, price_sqft: int} from 2015 to 2025.
@@ -2888,12 +3070,13 @@ trajectory_profile: object with:
           {onClear&&<button onClick={onClear} style={{background:"none",border:"none",color:C.blue,cursor:"pointer",fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:500}}>← Back to map</button>}
         </div>
         <div style={{display:"flex",gap:7}}>
-          <input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doAnalyze()}
-            style={{...IS,flex:1}} placeholder="e.g. Whitefield, Bengaluru or Sohna, Haryana"/>
-          <button onClick={()=>doAnalyze()} disabled={loading||!q.trim()}
-            style={{background:loading?C.muted:C.navy,color:"#fff",border:"none",borderRadius:8,padding:"0 15px",fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,cursor:loading?"default":"pointer",whiteSpace:"nowrap"}}>
-            {loading?"…":"Analyze →"}
-          </button>
+          <PlacesSearchInput
+            value={q}
+            onChange={v=>{setQ(v);if(placeData&&v!==placeData.display)setPlaceData(null);}}
+            onSelect={pd=>{setPlaceData(pd);setQ(pd.display);}}
+            onSearch={()=>doAnalyze()}
+            loading={loading}
+          />
         </div>
         <div style={{marginTop:8,display:"flex",flexWrap:"wrap",gap:5}}>
           {(()=>{
