@@ -43,7 +43,7 @@ export default async function handler(req, res) {
         'Content-Type': 'application/json',
         'x-api-key': process.env.ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'prompt-caching-2024-07-31',   // cache SYS prompt server-side
+        'anthropic-beta': 'prompt-caching-2024-07-31',   // Anthropic caches SYS prompt on their servers for 5 mins (ephemeral_5m in usage) — this is expected and correct. Redis cache handles our 7-day response caching.
       },
       body: JSON.stringify({ ...anthropicBody, stream: false }),
     });

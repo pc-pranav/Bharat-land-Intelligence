@@ -971,7 +971,10 @@ function scoreToColor(score) {
 }
 
 function MapView({pins=[], height=300, focusLat, focusLng, focusZoom=5, onStateClick, selectedState, localityName}) {
-  const apiKey = (typeof window !== 'undefined' && window.__NJ_GMAPS_KEY__) || (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GOOGLE_MAPS_API_KEY) || null;
+  const apiKey = (() => {
+    try { return window.__NJ_GMAPS_KEY__ || import.meta.env.VITE_GOOGLE_MAPS_API_KEY || null; }
+    catch(e) { return window?.__NJ_GMAPS_KEY__ || null; }
+  })();
   const [mode, setMode] = React.useState('google'); // prod: always Google Maps
   const [maptype, setMaptype] = React.useState('roadmap');
   const [ready, setReady] = React.useState(!!(typeof window !== 'undefined' && window.google?.maps));
@@ -2473,10 +2476,10 @@ Whitefield/Bengaluru East: growth_score≈80 | Electronic City: growth_score≈7
 
 Return ONLY a JSON array (no markdown fences), sorted by growth_score descending.
 Each object must have: location, district, state, current_price_sqft, expected_cagr, infrastructure_score (integer), risk_score (integer), growth_score (integer), recommendation, one_line_thesis, lat (number), lng (number).`;
-      const cacheKey="screener_"+[f.city,f.radius,f.minCagr,f.maxPrice,f.minInfra,f.maxRisk].join("_").toLowerCase().replace(/[^a-z0-9_]/g,"");
+      const cacheKey="screener_"+city.toLowerCase().replace(/\s+/g,"_")+"_r"+radius+"_s"+minScore;
       const res=await fetch(API_ENDPOINT,{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,temperature:0,system:[{type:"text",text:SYS_FAST,cache_control:{type:"ephemeral"}}],
+        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,temperature:0,system:[{type:"text",text:SYS,cache_control:{type:"ephemeral"}}],
           messages:[{role:"user",content:prompt}],cacheKey,cacheType:"screener"}),
       });
       const d=await res.json();
@@ -2556,7 +2559,7 @@ Each object must have: location, district, state, current_price_sqft, expected_c
   );
 }
 
-const SYS_FAST=`You are Namma Jaga AI — India's most trusted AI-powered real estate intelligence platform at nammajaga.com.
+const SYS=`You are Namma Jaga AI — India's most trusted AI-powered real estate intelligence platform at nammajaga.com.
 Today's date is ${new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}.
 
 Analyze the given Indian location. Return ONLY a raw JSON object starting with { and ending with }. No markdown, no fences.
@@ -2579,38 +2582,75 @@ Gachibowli (Hyderabad): infrastructure:80, population:78, economic:88, connectiv
 Hinjewadi (Pune): infrastructure:72, population:70, economic:80, connectivity:68, urban_expansion:75, market_momentum:74, scarcity:65, risk:35, catalyst:68
 Dholera (Gujarat): infrastructure:60, population:30, economic:65, connectivity:55, urban_expansion:90, market_momentum:72, scarcity:40, risk:55, catalyst:90
 
-SCORING CONSISTENCY: Use specific non-round integers. Each sub-score must follow a named, verifiable fact.
+SCORING CONSISTENCY: For ALL other localities not in the anchor table above — before assigning any sub-score, state the specific observable fact that drives it. Each sub-score must follow directly from a named, verifiable fact. Round numbers (50, 60, 70, 80) suggest estimation — use specific integers to show actual reasoning.
 
-Return ONLY these fields (keep values concise):
-growth_score (int), risk_score (int),
-infrastructure_score (int), population_score (int), economic_score (int),
-connectivity_score (int), urban_expansion_score (int), market_momentum_score (int),
-scarcity_score (int), catalyst_score (int),
-current_land_price (string "₹X–Y/sqft"), expected_cagr (string), confidence_level ("High"|"Medium"|"Low"),
-growth_zone (string), recommendation ("Buy Now"|"Accumulate"|"Watchlist"|"Hold"|"Avoid"),
-investment_thesis (string — 2 sentences max),
-growth_drivers (array of 5 strings — concise), major_risks (array of 4 strings — concise),
-location_name (string), state (string),
-lat (number — 4 decimal places min e.g. 12.9716), lng (number — 4 decimal places min e.g. 77.5946),
-sentiment_score (int), yoy_appreciation_pct (number), forecast_2yr (string), forecast_5yr (string),
-trajectory_profile (object: {current_stage:"Early Discovery"|"Rising"|"Established"|"Maturing"|"Saturated", investor_window:"Early-Stage Opportunity"|"Active Appreciation Window"|"Late-Stage Entry"|"Post-Peak"}),
-locality_insight (string — 2-3 sentences: what drove your scoring)
+CRITICAL REQUIREMENTS:
+1. news_signals: Include ALL known government signals — CM/Minister/PM statements, proposed airports, metro extensions, highway approvals, budget allocations, industrial zones, court orders. MUST include any upcoming civic projects that will INCREASE or DECREASE the score.
+2. civic_grievances: Based on your knowledge, list REAL known grievances for this area (waterlogging, traffic, power cuts, encroachment, pollution).
+3. price_history: Provide approximate price per sqft for last 5-10 years (use realistic market knowledge).
+4. comparable_projects: Each must include a Google Maps search link in format: https://www.google.com/maps/search/PROJECT+NAME+LOCALITY+CITY
+
+Required JSON keys:
+location_name, state, district, current_land_price,
+growth_score (int — your best independent estimate; note this is cross-checked client-side against a deterministic formula applied to your sub-scores below, so make sure the sub-scores honestly reflect your reasoning rather than working backward from a target headline number),
+risk_score (int), infrastructure_score (int), population_score (int),
+economic_score (int), connectivity_score (int), urban_expansion_score (int),
+market_momentum_score (int), scarcity_score (int), catalyst_score (int),
+forecast_2yr, forecast_5yr, forecast_10yr, expected_cagr, confidence_level, growth_zone,
+growth_drivers (array 5 strings), major_risks (array 4 strings),
+recommendation ("Buy Now"|"Accumulate"|"Watchlist"|"Hold"|"Avoid"),
+investment_thesis (string),
+trajectory_profile (object: {
+  current_stage: "Early Discovery"|"Rising"|"Established"|"Maturing"|"Saturated",
+  historical_mirror: "which specific famous locality at which specific year does this place resemble right now, and why — e.g. 'Electronic City in 2010: similar IT absorption rate, similar connectivity gap, similar price band'",
+  future_trajectory: "which locality does this place most likely become in 10 years and why",
+  price_when_mirror_was_here: "approximate price of the historical mirror locality at that reference year",
+  price_of_mirror_today: "approximate price of that same historical mirror locality today",
+  growth_multiple_achieved: "how many times the historical mirror grew from then to now — e.g. '4x in 12 years'",
+  investor_window: "Early-Stage Opportunity"|"Active Appreciation Window"|"Late-Stage Entry"|"Post-Peak"
+}),
+similar_to (string — keep for backward compatibility, same as trajectory_profile.historical_mirror summary),
+similarity_score (string),
+locality_insight (string — REQUIRED: explain what specific facts drove your scoring, and if you deviated from any anchor table value, state exactly why),
+lat (number — MUST be 4 decimal places minimum, e.g. 12.9716 not 12.97 — used for map zoom), lng (number — MUST be 4 decimal places minimum, e.g. 77.5946 not 77.59), sentiment_score (int), sentiment_summary (string),
+news_signals (array 4 objects: {headline, type (BULLISH|BEARISH|CATALYST|NEUTRAL), impact, price_impact, is_upcoming_civic (boolean)}),
+comparable_projects (array of 2-3 objects: {name (string), rate_sqft (string e.g. "₹7,500/sqft"), maps_link (string)}),
+civic_grievances (array of 3-5 strings — real known issues for this area),
+upcoming_civic_projects (array of 2-4 objects: {project, status, expected_completion, score_impact ("+5"|"-3" etc), price_impact}),
+price_history (array of objects: {year (int), price_sqft (int)} — last 8-10 years),
+economic_absorption (object: {
+  plan_vs_reality_gap: "High"|"Medium"|"Low" — how much do the plans (infra, smart city, capital city) outpace actual on-ground economic activity?
+  current_jobs_created: "approximate number of actual jobs created so far vs the grand plan — be specific, e.g. '~8,000 jobs vs 500,000 planned for Dholera SIR'",
+  private_sector_confidence: "High"|"Medium"|"Low"|"Absent" — are private companies actually investing or just government-funded?
+  livability_today: "Is the area currently livable? Are amenities, utilities, shops, schools actually present or still years away?",
+  absorption_risk: "What happens to property if the jobs/plan don't materialize? Concrete risk.",
+  verdict: "Speculative play"|"Emerging fundamentals"|"Strong absorption"|"Oversupplied"
+}),
+ripple_signal (object: {
+  overflow_from: "which saturating hub(s) is driving capital toward this locality — e.g. 'Whitefield (avg ₹18,000/sqft) pushing buyers toward Hoskote'",
+  distance_from_hub: "approximate km from that hub",
+  price_gap: "current price gap between hub and this locality — e.g. '3x cheaper than Whitefield'",
+  absorption_timeline: "estimated years before this locality reaches hub-like pricing — e.g. '5-8 years'",
+  catalysts_needed: "what specific things would accelerate this — e.g. 'metro connectivity, SH-35 widening, IT park announcement'"
+}),
+water_quality_note (string),
+traffic_intelligence (object: {
+  peak_hour_congestion: "Severe/High/Moderate/Low",
+  peak_hours: "e.g. 8-10am and 6-9pm",
+  main_bottlenecks: [array of 2-3 specific road/junction names with issue],
+  crowd_density: "Very High/High/Moderate/Low",
+  population_density_sqkm: integer estimate,
+  infrastructure_vs_population: "Adequate/Strained/Overwhelmed",
+  metro_bus_connectivity: "Excellent/Good/Average/Poor",
+  parking_situation: "Easy/Moderate/Difficult/Very Difficult",
+  weekend_vs_weekday: string (1 sentence),
+  future_relief: string (1 sentence),
+  investor_impact: string (1 sentence)
+})
+
+Scoring: Infrastructure 25%, Population 20%, Economic 20%, Connectivity 15%, Urban 10%, Momentum 5%, Scarcity 5%.
+Zones: 90-100 Mega Growth, 80-89 Emerging Hot, 65-79 Growth, 50-64 Stable, <50 High Risk.
 `;
-
-const SYS_DETAIL=`You are Namma Jaga AI. Given a location name, return supplementary real estate intelligence as JSON. Return ONLY raw JSON, no markdown.
-
-Return ONLY these fields:
-price_history (array of {year:int, price_sqft:int} — last 8 years),
-comparable_projects (array of 2-3 {name:string, rate_sqft:string "₹X/sqft", maps_link:string}),
-news_signals (array of 4 {headline:string, type:"BULLISH"|"BEARISH"|"CATALYST"|"NEUTRAL", impact:string, price_impact:string, is_upcoming_civic:boolean}),
-upcoming_civic_projects (array of 2-3 {project:string, status:string, expected_completion:string, score_impact:string, price_impact:string}),
-economic_absorption ({plan_vs_reality_gap:"High"|"Medium"|"Low", current_jobs_created:string, private_sector_confidence:"High"|"Medium"|"Low"|"Absent", livability_score:int, liveability_notes:string}),
-civic_grievances (array of 3 strings),
-elder_friendliness (string), kid_friendliness (string),
-rental_yield_pct (number), similar_to (string),
-ripple_effect_zones (array of 2-3 {zone:string, distance_km:number, relation:string, growth_potential:string})
-`;
-
 
 // ── Ambiguous locality names — same name exists in multiple parts of a city/state
 // When a user searches one of these, we ask which one they mean before running analysis.
@@ -2666,8 +2706,7 @@ function AnalyzeTab({initialQuery="",onClear}){
   const [report,setReport]=useState(null);
   const [pins,setPins]=useState([]);
   const [error,setError]=useState("");
-  const [disambigOptions,setDisambigOptions]=useState([]);
-  const [detailLoading,setDetailLoading]=useState(false); // true while phase 2 background fetch runs
+  const [disambigOptions,setDisambigOptions]=useState([]); // populated when location name is ambiguous
   const ranOnce=useRef(false);
 
   useEffect(()=>{
@@ -2686,62 +2725,93 @@ function AnalyzeTab({initialQuery="",onClear}){
   const doAnalyze=async(query)=>{
     const loc=(query||q).trim();
     if(!loc) return;
-    const ambig = checkAmbiguity(loc);
-    if(ambig.length > 0 && disambigOptions.length === 0) {
-      setDisambigOptions(ambig); return;
-    }
+    const ambig=checkAmbiguity(loc);
+    if(ambig.length>0&&disambigOptions.length===0){setDisambigOptions(ambig);return;}
     setDisambigOptions([]);
-    setLoading(true); setReport(null); setError(""); setPins([]); setStreamChars(0);
+    setLoading(true);setReport(null);setError("");setPins([]);setStreamChars(0);
 
-    const cacheKey = "analyze_"+loc.toLowerCase().trim().replace(/[^a-z0-9]+/g,"_");
-
-    // ── Phase 1: Fast call — above-fold data, ~400 tokens output ─────────────
-    try {
-      const res = await fetch(API_ENDPOINT, {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({
-          model:"claude-sonnet-4-6", max_tokens:1200, temperature:0,
-          system:[{type:"text",text:SYS_FAST,cache_control:{type:"ephemeral"}}],
-          messages:[{role:"user",content:`Analyze for land investment: ${loc}, India`}],
-          cacheKey, cacheType:"analyze"
+    const slug=loc.toLowerCase().trim().replace(/[^a-z0-9]+/g,"_");
+    const call=async(phase,prompt,maxTok)=>{
+      const res=await fetch(API_ENDPOINT,{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          model:"claude-sonnet-4-6",max_tokens:maxTok,temperature:0,
+          system:[{type:"text",text:SYS,cache_control:{type:"ephemeral"}}],
+          messages:[{role:"user",content:prompt}],
+          cacheKey:`analyze_${slug}_p${phase}`,cacheType:"analyze"
         }),
       });
-      const raw = await res.text();
-      let d = null; try{ d=JSON.parse(raw); }catch{}
-      if(!res.ok){ setError(`Request failed (HTTP ${res.status}). ${d?.error?.message||raw.slice(0,200)}`); setLoading(false); return; }
-      if(d?.error){ setError("API: "+d.error.message); setLoading(false); return; }
-      const text = d?.content?.map(b=>b.text||"").join("")||"";
-      const parsed = parseJSON(text);
-      if(!parsed||Array.isArray(parsed)){ setError("Parse failed. Raw: "+text.slice(0,300)); setLoading(false); return; }
+      const raw=await res.text();
+      let d=null;try{d=JSON.parse(raw);}catch{}
+      if(!res.ok||d?.error) throw new Error(d?.error?.message||raw.slice(0,200));
+      return parseJSON(d?.content?.map(b=>b.text||"").join("")||"");
+    };
 
-      // Show above-fold immediately
-      setReport(parsed);
-      setLoading(false);
-      if(parsed.lat&&parsed.lng) setPins([{...parsed,location:parsed.location_name}]);
+    try{
+      // ── Phase 1: Core scores, pricing, investment thesis ─────────────────
+      const p1=await call(1,
+        `Analyze "${loc}, India" for land/property investment. Return JSON with ONLY these fields:
+location_name, state, district, lat, lng, current_land_price, growth_score, risk_score,
+infrastructure_score, population_score, economic_score, connectivity_score,
+urban_expansion_score, market_momentum_score, scarcity_score, catalyst_score,
+forecast_2yr, forecast_5yr, forecast_10yr, expected_cagr, confidence_level,
+growth_zone, recommendation, investment_thesis, growth_drivers, major_risks,
+locality_insight, sentiment_score, sentiment_summary, similar_to, similarity_score`,
+        2000
+      );
+      if(!p1||Array.isArray(p1)){setError("Phase 1 parse failed");setLoading(false);return;}
+      setReport(p1);
+      if(p1.lat&&p1.lng) setPins([{...p1,location:p1.location_name}]);
+      setStreamChars(1);
 
-      // ── Phase 2: Detail call — runs in background while user reads Phase 1 ─
-      setDetailLoading(true);
-      const detailCacheKey = "detail_"+loc.toLowerCase().trim().replace(/[^a-z0-9]+/g,"_");
-      fetch(API_ENDPOINT, {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({
-          model:"claude-sonnet-4-6", max_tokens:1800, temperature:0,
-          system:[{type:"text",text:SYS_DETAIL,cache_control:{type:"ephemeral"}}],
-          messages:[{role:"user",content:`Location: ${loc}, India. State: ${parsed.state||""}. Growth score: ${parsed.growth_score}.`}],
-          cacheKey: detailCacheKey, cacheType:"analyze"
-        }),
-      }).then(r=>r.text()).then(raw2=>{
-        let d2=null; try{ d2=JSON.parse(raw2); }catch{}
-        if(!d2?.content) return;
-        const text2 = d2.content.map(b=>b.text||"").join("");
-        const detail = parseJSON(text2);
-        if(detail&&!Array.isArray(detail)){
-          setReport(prev => prev ? {...prev, ...detail} : prev);
-        }
-        setDetailLoading(false);
-      }).catch(()=>{ setDetailLoading(false); }); // detail failure is non-fatal
+      // ── Phase 2: News signals, civic projects, comparable projects ────────
+      const p2=await call(2,
+        `For "${loc}, India" return JSON with ONLY these fields (use your real knowledge, be specific and detailed):
+news_signals (array of 4 objects: {headline, type: BULLISH|BEARISH|CATALYST|NEUTRAL, impact, price_impact, is_upcoming_civic: boolean}),
+upcoming_civic_projects (array of 3-4 objects: {project, status, expected_completion, score_impact, price_impact}),
+comparable_projects (array of 3 objects: {name, rate_sqft, maps_link})`,
+        2000
+      );
+      if(p2&&!Array.isArray(p2)) setReport(r=>({...r,...p2}));
+      setStreamChars(2);
 
-    } catch(e){ setError("Error: "+e.message); setLoading(false); }
+      // ── Phase 3: Traffic, crowd, water quality, civic grievances ──────────
+      const p3=await call(3,
+        `For "${loc}, India" return JSON with ONLY these fields (be very specific and detailed — users rely on this for decisions):
+traffic_intelligence (object: {
+  peak_hour_congestion: "Severe|High|Moderate|Low",
+  peak_hours: "specific time windows e.g. 8-10am and 6-9pm",
+  main_bottlenecks: [array of 3 specific road/junction names with exact issue],
+  crowd_density: "Very High|High|Moderate|Low",
+  population_density_sqkm: integer,
+  infrastructure_vs_population: "Adequate|Strained|Overwhelmed",
+  metro_bus_connectivity: "Excellent|Good|Average|Poor",
+  parking_situation: "Easy|Moderate|Difficult|Very Difficult",
+  weekend_vs_weekday: "one specific sentence about difference",
+  future_relief: "one sentence on upcoming road/metro relief projects",
+  investor_impact: "one sentence on how traffic affects property value here"
+}),
+water_quality_note (string — specific details: source, quality, TDS levels if known, seasonal issues, borewell vs BWSSB/corporation supply, any contamination reports),
+civic_grievances (array of 4-5 specific strings — real known issues: waterlogging spots, power cut frequency, garbage, encroachment, specific roads/areas affected)`,
+        2500
+      );
+      if(p3&&!Array.isArray(p3)) setReport(r=>({...r,...p3}));
+      setStreamChars(3);
+
+      // ── Phase 4: Price history, ripple signal, economic absorption, trajectory ─
+      const p4=await call(4,
+        `For "${loc}, India" return JSON with ONLY these fields:
+price_history (array of 8-10 objects: {year: int, price_sqft: int} — from ~2015 to 2025, be realistic),
+ripple_signal (object: {overflow_from, distance_from_hub, price_gap, absorption_timeline, catalysts_needed}),
+economic_absorption (object: {plan_vs_reality_gap: "High|Medium|Low", current_jobs_created, private_sector_confidence: "High|Medium|Low|Absent", livability_today, absorption_risk, verdict: "Speculative play|Emerging fundamentals|Strong absorption|Oversupplied"}),
+trajectory_profile (object: {current_stage, historical_mirror, future_trajectory, price_when_mirror_was_here, price_of_mirror_today, growth_multiple_achieved, investor_window})`,
+        2500
+      );
+      if(p4&&!Array.isArray(p4)) setReport(r=>({...r,...p4}));
+      setStreamChars(4);
+
+    }catch(e){setError("Error: "+e.message);}
+    setLoading(false);
   };
 
   return(
@@ -2826,16 +2896,6 @@ function AnalyzeTab({initialQuery="",onClear}){
         <>
           <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark}}>🗺️ {report.location_name} on India Growth Map</div>
           <MapView pins={pins} selectedState={report.state} height={270} focusLat={report.lat} focusLng={report.lng} focusZoom={14} localityName={q}/>
-          {detailLoading&&(
-            <div style={{display:"flex",alignItems:"center",gap:8,background:"#EFF6FF",
-              borderRadius:8,padding:"8px 12px",border:"1px solid #BFDBFE",marginTop:4}}>
-              <div style={{width:14,height:14,border:"2px solid #2563EB",borderTopColor:"transparent",
-                borderRadius:"50%",animation:"spin 0.8s linear infinite",flexShrink:0}}/>
-              <span style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#1D4ED8",fontWeight:600}}>
-                Loading price history, comparable projects & more…
-              </span>
-            </div>
-          )}
           <ReportCard data={report} pins={pins}/>
         </>
       )}
@@ -3927,7 +3987,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
       const res = await fetch(API_ENDPOINT, {
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({model:"claude-sonnet-4-6", max_tokens:4000, temperature:0,
-          system:[{type:"text",text:SYS_FAST,cache_control:{type:"ephemeral"}}],
+          system:[{type:"text",text:SYS,cache_control:{type:"ephemeral"}}],
           messages:[{role:"user",content:prompt}], cacheKey, cacheType:"pricer"}),
       });
       const d = await res.json();
@@ -5089,8 +5149,7 @@ function AppInner(){
 
   return(
     <div style={{minHeight:"100vh",background:C.bg}}>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Serif+Kannada:wght@900&display=swap');`}</style>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Serif+Kannada:wght@900&display=swap');`}</style>
       <div style={{position:"sticky",top:0,zIndex:1000,boxShadow:"0 2px 12px rgba(0,0,0,0.18)"}}>
         <div style={{background:"#fff",padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:"1px solid #E2E8F0"}}>
           {/* Logo — tappable, goes to Home */}
