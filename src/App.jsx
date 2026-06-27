@@ -2906,7 +2906,7 @@ function AnalyzeTab({initialQuery="",onClear}){
     // ── Canonical search string for the AI prompt ──────────────────────────────
     const aiLoc = placeData?.display || loc;   // use Google's canonical name if available
 
-    // call() — handles both SSE streaming (prod) and plain JSON (artifact preview)
+    // call() — handles SSE streaming (prod) and plain JSON (artifact preview)
     const call=async(phase,prompt,maxTok)=>{
       const res=await fetch(API_ENDPOINT,{
         method:"POST",headers:{"Content-Type":"application/json"},
@@ -2917,41 +2917,66 @@ function AnalyzeTab({initialQuery="",onClear}){
           cacheKey:`analyze_${slug}_p${phase}`,cacheType:"analyze"
         }),
       });
-      if(!res.ok) throw new Error(`HTTP ${res.status}`);
+      if(!res.ok) {
+        const errText = await res.text().catch(()=>"");
+        throw new Error(`HTTP ${res.status}: ${errText.slice(0,200)}`);
+      }
 
       const contentType = res.headers.get("content-type")||"";
 
-      // ── SSE stream (prod via /api/claude) ─────────────────────────────────
+      // ── SSE stream (prod /api/claude returns text/event-stream) ───────────
       if(contentType.includes("text/event-stream")) {
-        const reader = res.body.getReader();
-        const dec    = new TextDecoder();
-        let fullText = "";
-        let finalResp = null;
+        const reader  = res.body.getReader();
+        const dec     = new TextDecoder();
+        let fullText  = "";
+        let finalText = null; // set when we receive the {type:"done"} event
+        let buf       = "";   // buffer incomplete SSE lines across chunks
+
         try {
           while(true) {
             const {done,value} = await reader.read();
             if(done) break;
-            const chunk = dec.decode(value,{stream:true});
-            for(const line of chunk.split("\n")) {
+            buf += dec.decode(value, {stream:true});
+            // Process complete lines only
+            const lines = buf.split("\n");
+            buf = lines.pop(); // keep last (possibly incomplete) line in buffer
+            for(const line of lines) {
               if(!line.startsWith("data: ")) continue;
+              const raw = line.slice(6).trim();
+              if(!raw || raw==="[DONE]") continue;
               try {
-                const evt = JSON.parse(line.slice(6));
-                if(evt.type==="delta")    fullText += evt.text||"";
-                if(evt.type==="done")     finalResp = evt.response;
-                if(evt.type==="error")    throw new Error(evt.error||"Stream error");
-              } catch(parseErr) { if(parseErr.message!=="Unexpected token") throw parseErr; }
+                const evt = JSON.parse(raw);
+                if(evt.type==="delta" && evt.text)  fullText += evt.text;
+                if(evt.type==="done"  && evt.response) {
+                  // Extract text from the done event's response object
+                  finalText = evt.response?.content?.[0]?.text || fullText;
+                }
+                if(evt.type==="error") throw new Error(evt.error||"Stream error");
+              } catch(e) {
+                // Only rethrow real errors, not JSON parse glitches on malformed chunks
+                if(e.message && !e.message.includes("JSON") && !e.message.includes("token")) throw e;
+              }
             }
           }
         } finally { reader.releaseLock(); }
-        const text = finalResp?.content?.[0]?.text || fullText;
-        return parseJSON(text);
+
+        // Prefer the done-event text (complete), fall back to accumulated deltas
+        const text = finalText || fullText;
+        if(!text.trim()) throw new Error(`Phase ${phase}: empty response from stream`);
+        const parsed = parseJSON(text);
+        if(!parsed || Array.isArray(parsed)) throw new Error(`Phase ${phase}: JSON parse failed. Preview: ${text.slice(0,120)}`);
+        return parsed;
       }
 
-      // ── Plain JSON (artifact preview — direct Anthropic endpoint) ─────────
+      // ── Plain JSON (artifact preview — calls Anthropic directly) ──────────
       const raw = await res.text();
-      let d=null; try{d=JSON.parse(raw);}catch{}
+      let d=null; try{d=JSON.parse(raw);}catch(e){ throw new Error(`Response parse error: ${raw.slice(0,200)}`); }
       if(d?.error) throw new Error(d.error.message||"API error");
-      return parseJSON(d?.content?.map(b=>b.text||"").join("")||"");
+      const text = d?.content?.map(b=>b.text||"").join("")||"";
+      if(!text.trim()) throw new Error(`Phase ${phase}: empty response`);
+      const parsed = parseJSON(text);
+      if(!parsed || Array.isArray(parsed)) throw new Error(`Phase ${phase}: JSON parse failed. Preview: ${text.slice(0,120)}`);
+      return parsed;
     };
 
     try{
@@ -2979,9 +3004,9 @@ major_risks: array of 4 strings, each specific and named (not generic),
 locality_insight: 3-4 sentences explaining your scoring decisions with specific facts,
 sentiment_score (int 1-100), sentiment_summary (string),
 similar_to (string), similarity_score (string)`,
-        3500
+        1800
       );
-      if(!p1||Array.isArray(p1)){setError("Phase 1 parse failed");setLoading(false);return;}
+      // p1 errors throw inside call() — this should never be null if call() succeeded
       // Inject Places Autocomplete coords if AI returns imprecise ones
       if(placeData?.lat && placeData?.lng) {
         const aiLat = parseFloat(String(p1.lat||0));
@@ -2993,99 +3018,85 @@ similar_to (string), similarity_score (string)`,
       if(p1.lat&&p1.lng) setPins([{...p1,location:p1.location_name}]);
       setStreamChars(1);
 
+      if(p1.lat&&p1.lng) setPins([{...p1,location:p1.location_name}]);
+      setStreamChars(1);
+
       // ── Phase 2: Market signals + projects + comparables ──────────────────
       const p2=await call(2,
-        `You are a real estate intelligence analyst. For "${aiLoc}, India", return a raw JSON with these fields.
-Use REAL knowledge — name specific projects, roads, government orders, builder names.
+        `Analyze "${aiLoc}, India" for a property investor. Return ONLY compact raw JSON with these fields:
 
-news_signals: array of 4 objects. Each must have:
-  headline (specific, named — e.g. "BBMP approves ₹240Cr widening of XYZ Road"),
+news_signals: array of 4 objects {
+  headline (specific named headline),
   type (BULLISH|BEARISH|CATALYST|NEUTRAL),
-  impact (2-3 sentences explaining the SPECIFIC effect on this locality),
+  impact (2 sentences on effect for this locality),
   price_impact (e.g. "+5% to +8% over 18 months"),
   is_upcoming_civic (boolean)
-
-upcoming_civic_projects: array of 4 objects. Each must have:
+}
+upcoming_civic_projects: array of 4 objects {
   project (specific named project),
-  status (e.g. "Land acquisition ongoing", "DPR approved", "Under construction"),
-  expected_completion (year or "TBD"),
-  score_impact (e.g. "+6 to growth score upon completion"),
-  price_impact (specific % range)
-
-comparable_projects: array of 3 objects with:
-  name (real project name),
-  rate_sqft (e.g. "₹7,500–9,000/sqft"),
-  maps_link ("https://www.google.com/maps/search/PROJECT+NAME+LOCALITY")`,
-        3000
+  status (e.g. "Under construction", "DPR approved"),
+  expected_completion, score_impact (e.g. "+6"), price_impact
+}
+comparable_projects: array of 3 objects {name, rate_sqft, maps_link}`,
+        1500
       );
       if(p2&&!Array.isArray(p2)) setReport(r=>({...r,...p2}));
       setStreamChars(2);
 
-      // ── Phase 3: Traffic + water + civic grievances (full detail) ─────────
+      // ── Phase 3: Traffic + water + civic grievances ───────────────────────
       const p3=await call(3,
-        `You are a civic intelligence analyst. For "${aiLoc}, India", return a raw JSON with these fields.
-Be VERY specific — name actual roads, junctions, pipe networks, known local issues. Users rely on this.
+        `Analyze "${aiLoc}, India". Return ONLY compact raw JSON with these fields:
 
-traffic_intelligence: object with ALL of these keys:
-  peak_hour_congestion: "Severe|High|Moderate|Low" (be honest based on ground reality),
-  peak_hours: specific windows e.g. "8:00–10:30am and 6:00–9:30pm on weekdays",
-  main_bottlenecks: array of 3 NAMED junctions/roads with specific issue per item
-    e.g. ["Silk Board Junction: merging of 6 arterial roads causes 40-60 min delays",
-          "Marathahalli Bridge: single carriageway over Varthur Lake — key chokepoint"],
+traffic_intelligence: {
+  peak_hour_congestion: "Severe|High|Moderate|Low",
+  peak_hours: "e.g. 8-10am and 6-9pm",
+  main_bottlenecks: [3 specific named junctions/roads with issue],
   crowd_density: "Very High|High|Moderate|Low",
-  population_density_sqkm: realistic integer estimate,
+  population_density_sqkm: integer,
   infrastructure_vs_population: "Adequate|Strained|Overwhelmed",
-  metro_bus_connectivity: "Excellent|Good|Average|Poor" with brief reason,
+  metro_bus_connectivity: "Excellent|Good|Average|Poor",
   parking_situation: "Easy|Moderate|Difficult|Very Difficult",
-  weekend_vs_weekday: one sentence on the specific difference for THIS locality,
-  future_relief: one sentence naming actual planned relief — road widening, flyover, metro station etc,
-  investor_impact: one sentence — how does traffic specifically affect property value or buyer decision here
-
-water_quality_note: 3-4 sentences covering ALL of: primary water source (BWSSB/HMWSSB/corporation vs borewell),
-  quality and TDS range if known, seasonal issues (summer scarcity, monsoon flooding near pipes),
-  any contamination history or fluoride/hardness issues specific to this locality.
-
-civic_grievances: array of 5 specific strings. Each must name a SPECIFIC location, street, or known issue.
-  Bad example: "Traffic congestion"
-  Good example: "Severe waterlogging at Kundanahalli Gate during monsoons — knee-deep flooding reported Aug 2023, BBMP action still pending"`,
-        3000
+  weekend_vs_weekday: one sentence,
+  future_relief: one sentence on planned relief,
+  investor_impact: one sentence on property value impact
+}
+water_quality_note: 2-3 sentences — source, TDS, seasonal issues.
+civic_grievances: array of 4 specific strings naming actual streets/locations.`,
+        1500
       );
       if(p3&&!Array.isArray(p3)) setReport(r=>({...r,...p3}));
       setStreamChars(3);
 
-      // ── Phase 4: History + ripple + absorption + trajectory ───────────────
+      // ── Phase 4: Price history + ripple + absorption + trajectory ─────────
       const p4=await call(4,
-        `You are a real estate research analyst. For "${aiLoc}, India", return a raw JSON with these fields.
-Use realistic market knowledge — don't use round numbers, be specific.
+        `Analyze "${aiLoc}, India". Return ONLY compact raw JSON with these fields:
 
-price_history: array of 9-10 objects {year: int, price_sqft: int} from 2015 to 2025.
-  Reflect real market cycles — 2020 COVID dip, 2022-23 post-COVID recovery, 2024-25 current.
-  Use integers, not round numbers (e.g. 4200 not 4000).
+price_history: array of 9 objects {year: int, price_sqft: int} from 2015-2025.
+  Use realistic non-round numbers. Reflect COVID dip in 2020-21.
 
-ripple_signal: object with:
-  overflow_from: specific hub locality name and current avg price e.g. "Whitefield (avg ₹18,000/sqft)",
-  distance_from_hub: "X km from [hub name]",
-  price_gap: specific price gap e.g. "2.8x cheaper than Whitefield right now",
-  absorption_timeline: realistic estimate e.g. "6–9 years to reach hub-level pricing",
-  catalysts_needed: 2-3 specific things that would accelerate this e.g. "Metro station within 500m, IT park on ORR, SH-35 6-laning"
-
-economic_absorption: object with:
+ripple_signal: {
+  overflow_from: "hub name and avg price",
+  distance_from_hub: "X km",
+  price_gap: "e.g. 2.8x cheaper",
+  absorption_timeline: "e.g. 6-9 years",
+  catalysts_needed: "2-3 specific things"
+}
+economic_absorption: {
   plan_vs_reality_gap: "High|Medium|Low",
-  current_jobs_created: specific number vs plan e.g. "~45,000 jobs within 3km vs 200,000 planned",
+  current_jobs_created: specific number,
   private_sector_confidence: "High|Medium|Low|Absent",
-  livability_today: 2 sentences on actual ground reality — schools, hospitals, daily needs,
-  absorption_risk: 1-2 sentences on what happens if plans don't materialize,
+  livability_today: 2 sentences,
+  absorption_risk: 1 sentence,
   verdict: "Speculative play|Emerging fundamentals|Strong absorption|Oversupplied"
-
-trajectory_profile: object with:
+}
+trajectory_profile: {
   current_stage: "Early Discovery|Rising|Established|Maturing|Saturated",
-  historical_mirror: specific comparison e.g. "Resembles Whitefield in 2010: similar IT absorption, ₹3,500–5,000/sqft, pre-metro era",
-  future_trajectory: what this place becomes in 10 years and why,
-  price_when_mirror_was_here: price at that reference year,
-  price_of_mirror_today: current price of that reference locality,
-  growth_multiple_achieved: e.g. "4.2x in 12 years",
-  investor_window: "Early-Stage Opportunity|Active Appreciation Window|Late-Stage Entry|Post-Peak"`,
-        3500
+  historical_mirror: specific locality + year comparison,
+  future_trajectory: 1 sentence,
+  price_when_mirror_was_here, price_of_mirror_today, growth_multiple_achieved,
+  investor_window: "Early-Stage Opportunity|Active Appreciation Window|Late-Stage Entry|Post-Peak"
+}`,
+        1800
       );
       if(p4&&!Array.isArray(p4)) setReport(r=>({...r,...p4}));
       setStreamChars(4);
