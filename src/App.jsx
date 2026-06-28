@@ -2455,6 +2455,17 @@ function ReportCard({data,pins}){
 const LS={fontFamily:"Inter,sans-serif",fontSize:12,color:C.muted,display:"block",marginBottom:3,fontWeight:500};
 const IS={width:"100%",border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 11px",fontFamily:"Inter,sans-serif",fontSize:13,color:C.dark,outline:"none",boxSizing:"border-box",background:C.bg};
 
+// ── Shared formatters ────────────────────────────────────────────────────────
+const fmtL  = (n) => n >= 10000000 ? (n/10000000).toFixed(2)+"Cr"
+                   : n >= 100000   ? (n/100000).toFixed(2)+"L"
+                   : n >= 1000     ? (n/1000).toFixed(0)+"k"
+                   : String(Math.round(n||0));
+const fmt   = (n) => "₹" + fmtL(n);
+const fmtCr = (n) => `₹${(n/1e7).toFixed(2)} Cr`;
+
+// ── BUILDING_AGE options (used in Pricer wizard) ──────────────────────────────
+const BUILDING_AGE = ["New (0-2 yrs)","2-5 yrs","5-10 yrs","10-20 yrs","20+ yrs (Old)"];
+
 // ── RERA Search Component ──────────────────────────────────────────────────
 // Searches the ETL-built rera_index.json by project name OR company name.
 // No registration number needed. Links directly to official state portal.
@@ -3911,9 +3922,6 @@ const CITY_GROUPS = Object.keys(APPROVAL_TYPES);
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Shared formatters — module level so outside components can use them ─────────
-const fmtL = (n) => n >= 10000000 ? (n/10000000).toFixed(2)+"Cr" : n >= 100000 ? (n/100000).toFixed(2)+"L" : n >= 1000 ? (n/1000).toFixed(0)+"k" : String(Math.round(n||0));
-const fmt   = (n) => "₹" + fmtL(n);
-const fmtCr = (n) => `₹${(n/1e7).toFixed(2)} Cr`;
 
 // ── Live estimate bar — outside PricerTab so memo works ──────────────────────
 const PricerLiveEstimate = React.memo(function PricerLiveEstimate({est, gst, city}) {
@@ -4373,9 +4381,38 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
           system:[{type:"text",text:SYS,cache_control:{type:"ephemeral"}}],
           messages:[{role:"user",content:prompt}], cacheKey, cacheType:"pricer"}),
       });
-      const d = await res.json();
-      if(d.error) { setError("API: "+d.error.message); setLoading(false); return; }
-      const text = d.content?.map(b=>b.text||"").join("")||"";
+      if(!res.ok){ const e=await res.text().catch(()=>""); setError(`HTTP ${res.status}: ${e.slice(0,200)}`); setLoading(false); return; }
+
+      // Handle SSE streaming (prod) or plain JSON (artifact)
+      let text = "";
+      const ct = res.headers.get("content-type")||"";
+      if(ct.includes("text/event-stream")) {
+        const reader = res.body.getReader(); const dec = new TextDecoder();
+        let buf = "", finalText = null;
+        try {
+          while(true) {
+            const {done,value} = await reader.read(); if(done) break;
+            buf += dec.decode(value,{stream:true});
+            const lines = buf.split("\n"); buf = lines.pop();
+            for(const line of lines) {
+              if(!line.startsWith("data: ")) continue;
+              const raw = line.slice(6).trim(); if(!raw||raw==="[DONE]") continue;
+              try {
+                const evt = JSON.parse(raw);
+                if(evt.type==="delta") text += evt.text||"";
+                if(evt.type==="done") finalText = evt.response?.content?.[0]?.text||text;
+                if(evt.type==="error") throw new Error(evt.error||"Stream error");
+              } catch(e){ if(!e.message?.includes("JSON")&&!e.message?.includes("token")) throw e; }
+            }
+          }
+        } finally { reader.releaseLock(); }
+        text = finalText || text;
+      } else {
+        const d = await res.json();
+        if(d.error){ setError("API: "+d.error.message); setLoading(false); return; }
+        if(d._cacheHit){ text = d.content?.[0]?.text||""; }
+        else { text = d.content?.map(b=>b.text||"").join("")||""; }
+      }
       const parsed = parseJSON(text);
       if(parsed) {
         const aiPremium = getAIPremium(canonicalLocality, canonicalCity);
@@ -4458,1070 +4495,993 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
   const sectionIdx = SECTION_CONFIG.findIndex(s=>s.id===activeSection);
 
   // Live estimate bar (always visible in full valuation mode)
-  return (
-    <div style={{display:"flex",flexDirection:"column",gap:10}}>
 
-      {/* ── Mode toggle ── */}
-      <div style={{display:"flex",background:"#E2E8F0",borderRadius:11,padding:3,gap:3}}>
-        {[["quick","⚡ Quick Check"],["full","🔬 Full Valuation"]].map(([m,label])=>(
-          <button key={m} onClick={()=>{setMode(m);setResult(null);setError("");}}
-            style={{flex:1,padding:"9px 6px",borderRadius:9,border:"none",cursor:"pointer",
-              fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,
-              background:mode===m?"#fff":"transparent",color:mode===m?"#1E293B":"#64748B",
-              boxShadow:mode===m?"0 1px 5px rgba(0,0,0,.12)":"none"}}>
-            {label}
-          </button>
-        ))}
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:10,paddingBottom:16}}>
+
+      {/* ── Quick / Full toggle ─────────────────────────────────────────────── */}
+      <div style={{padding:"10px 12px 0"}}>
+        <div style={{display:"flex",background:"#E2E8F0",borderRadius:11,padding:3,gap:3}}>
+          {[["quick","⚡ Quick Check"],["full","🔬 Full Valuation"]].map(([m,label])=>(
+            <button key={m} onClick={()=>setMode(m)}
+              style={{flex:1,padding:"8px 0",borderRadius:8,border:"none",cursor:"pointer",
+                fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,
+                background:mode===m?"#fff":"transparent",
+                color:mode===m?C.dark:C.muted,
+                boxShadow:mode===m?"0 1px 4px rgba(0,0,0,.10)":"none",
+                transition:"all .15s"}}>
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* ══════════════════════════════════════════════════════════════════
-          QUICK CHECK MODE
-      ══════════════════════════════════════════════════════════════════ */}
-      {mode==="quick" && (<>
+      {/* ── Property type grid (always visible) ────────────────────────────── */}
+      <div style={{margin:"0 12px",background:"#fff",borderRadius:12,border:`1px solid ${C.border}`,padding:12}}>
+        <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:700,color:C.dark,marginBottom:10}}>🏡 Property Price Analyser</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>
+          {PROP_TYPES_FULL.map(({type,icon,sub})=>(
+            <button key={type} onClick={()=>setPropType(type)}
+              style={{border:propType===type?`2px solid ${C.blue}`:`1.5px solid ${C.border}`,
+                borderRadius:9,padding:"9px 10px",background:propType===type?"#EFF6FF":"#fff",
+                display:"flex",alignItems:"center",gap:8,cursor:"pointer",textAlign:"left"}}>
+              <span style={{fontSize:20}}>{icon}</span>
+              <div>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:propType===type?700:600,
+                  color:propType===type?C.blue:"#374151",lineHeight:1.2}}>{type}</div>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,marginTop:2}}>{sub}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
 
-        {/* 4 quick inputs */}
-        <div style={{background:"#fff",border:`1px solid ${C.border}`,borderRadius:12,padding:13,
+      {/* ── QUICK CHECK MODE ────────────────────────────────────────────────── */}
+      {mode==="quick"&&(
+        <div style={{margin:"0 12px",background:"#fff",borderRadius:12,border:`1px solid ${C.border}`,padding:14,
           display:"flex",flexDirection:"column",gap:10}}>
+          <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,color:C.dark}}>⚡ Quick Estimate</div>
+          {/* Location */}
           <div>
-              <div style={LS}>Locality / Project</div>
-              <PricerLocationSearch
-                value={locality}
-                onChange={v=>{ setLocality(v); if(pricerPlaceData&&v!==pricerPlaceData.display) setPricerPlaceData(null); }}
-                onSelect={pd=>{ setPricerPlaceData(pd); setLocality(pd.display); if(pd.city) setCity(pd.city); }}
-              />
-            </div>
+            <div style={LS}>Locality / Area *</div>
+            <PricerLocationSearch
+              value={locality}
+              onChange={v=>{setLocality(v);if(pricerPlaceData&&v!==pricerPlaceData.display)setPricerPlaceData(null);}}
+              onSelect={pd=>{setPricerPlaceData(pd);setLocality(pd.display);if(pd.city)setCity(pd.city);}}
+            />
+          </div>
           <div style={{display:"flex",gap:8}}>
-            <div style={{flex:1}}><div style={LS}>Type</div>
-              <select value={propType} onChange={e=>setPropType(e.target.value)} style={IS}>
-                {(PROPERTY_TYPES||["Apartment / Flat","Villa / Independent House","Plot / Land","Penthouse","Row House / Townhouse"]).map(t=><option key={t}>{t}</option>)}
+            <div style={{flex:1}}>
+              <div style={LS}>BHK / Config</div>
+              <select value={bhk} onChange={e=>setBhk(e.target.value)} style={IS}>
+                {BHK_OPTIONS.map(o=><option key={o}>{o}</option>)}
               </select>
             </div>
-            <div style={{flex:1}}><div style={LS}>Area (sqft)</div>
-              <input type="number" value={area}
-                onChange={e=>setArea(e.target.value===''?'':parseInt(e.target.value)||'')}
-                onBlur={e=>{const v=parseInt(e.target.value);setArea(v>0?v:1200);}} style={IS}/>
+            <div style={{flex:1}}>
+              <div style={LS}>Area Type</div>
+              <select value={areaType} onChange={e=>setAreaType(e.target.value)} style={IS}>
+                {["Carpet Area","Built-up Area","Super Built-up Area"].map(o=><option key={o}>{o}</option>)}
+              </select>
             </div>
           </div>
-          <div style={{display:"flex",gap:8}}>
-            <div style={{flex:1}}><div style={LS}>City</div>
-              <input value={city} onChange={e=>setCity(e.target.value)} style={IS}/>
-            </div>
-            <div style={{flex:1}}><div style={LS}>Asking price ₹</div>
-              <input value={askingPrice} onChange={e=>setAskingPrice(e.target.value)} placeholder="Optional" style={IS}/>
+          <div>
+            <div style={LS}>Area (sqft) — <strong style={{color:C.blue}}>{(isPlot?plotArea:area).toLocaleString()}</strong></div>
+            <input type="range" min={300} max={8000} step={50}
+              value={isPlot?plotArea:area}
+              onChange={e=>isPlot?setPlotArea(+e.target.value):setArea(+e.target.value)}
+              style={{width:"100%",marginTop:4,accentColor:C.blue,touchAction:"none",cursor:"ew-resize"}}/>
+            <div style={{display:"flex",justifyContent:"space-between",fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,marginTop:2}}>
+              <span>300</span><span>8,000</span>
             </div>
           </div>
-        </div>
-
-        {/* Quick result */}
-        {(locality.trim()||area!==1200)&&(()=>{
-          const est=calcEstimate(); const gst=calcGST(est.total);
-          if(isNaN(est.rate)||est.rate<=0) return null;
-          return (
-            <div style={{background:"linear-gradient(135deg,#0F1B2D,#1E293B)",borderRadius:13,padding:15}}>
-              <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:11,marginBottom:3}}>
-                Fair market estimate · {city}
-              </div>
-              <div style={{color:"#F8FAFB",fontFamily:"serif",fontSize:26,marginBottom:3}}>
-                {fmt(est.low)} – {fmtCr(est.high)}
-              </div>
-              <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:11,marginBottom:gst.amount?6:10}}>
-                ₹{est.rate.toLocaleString()}/sqft · formula-based
-              </div>
-              {gst.amount>0&&(
-                <div style={{color:"#FCD34D",fontFamily:"Inter,sans-serif",fontSize:11,marginBottom:10}}>
-                  + GST ({gst.rate}%) = {fmt(gst.total)} total
-                </div>
-              )}
-              {askingPrice&&(()=>{
-                const asking=parseFloat(askingPrice.replace(/[₹,CcRr]/gi,'').trim())
-                  *(askingPrice.toLowerCase().includes('l')?1e5:askingPrice.toLowerCase().includes('c')?1e7:1);
-                if(!asking) return null;
-                const diff=((asking-est.total)/est.total*100).toFixed(1);
-                const fair=Math.abs(parseFloat(diff))<10, over=parseFloat(diff)>10;
-                return <div style={{background:"rgba(255,255,255,.08)",borderRadius:8,padding:"9px 11px",
-                  fontFamily:"Inter,sans-serif",fontSize:11,color:"#F8FAFB",marginBottom:10}}>
-                  {fair?"✅ Asking price is within fair range":over?`⚠️ ${diff}% above estimate`:`💡 ${Math.abs(diff)}% below — good value`}
-                </div>;
-              })()}
-              <div style={{display:"flex",gap:7}}>
-                <button onClick={()=>{setMode("full");setResult(null);}}
-                  style={{flex:1,padding:9,borderRadius:8,fontSize:11,fontWeight:700,fontFamily:"Inter,sans-serif",
-                    cursor:"pointer",background:"#2563EB",color:"#fff",border:"none"}}>
-                  Full breakdown →
-                </button>
-                <button onClick={()=>{setMode("full");setActiveSection("uds");setResult(null);}}
-                  style={{flex:1,padding:9,borderRadius:8,fontSize:11,fontWeight:700,fontFamily:"Inter,sans-serif",
-                    cursor:"pointer",background:"rgba(255,255,255,.1)",color:"#F8FAFB",border:"none"}}>
-                  UDS & Loan →
-                </button>
-              </div>
-            </div>
-          );
-        })()}
-
-      </>)}
-
-      {/* ══════════════════════════════════════════════════════════════════
-          FULL VALUATION — OPTION B DESIGN
-      ══════════════════════════════════════════════════════════════════ */}
-      {mode==="full"&&(
-        <div style={{background:"#fff",borderRadius:12,border:`1px solid ${C.border}`,padding:14}}>
-
-          {/* Header */}
-          <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.dark,marginBottom:10,
-            display:"flex",alignItems:"center",gap:6}}>
-            🏘️ Property Price Analyser
+          <div>
+            <div style={LS}>Asking Price (₹) <span style={{fontWeight:400,color:C.muted}}>(optional)</span></div>
+            <input value={askingPrice} onChange={e=>setAskingPrice(e.target.value)} placeholder="e.g. 85,00,000" style={{...IS,width:"100%"}}/>
           </div>
-
-          {/* ── 2×3 Property type grid (Option B design) ── */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:12}}>
-            {PROP_TYPES_FULL.map(({type,icon,sub})=>{
-              const sel = propType===type;
-              return (
-                <button key={type} onClick={()=>{setPropType(type);resetForm();}}
-                  style={{background:sel?"#EFF6FF":"#F8FAFB",
-                    border:`1.5px solid ${sel?C.blue:C.border}`,
-                    borderRadius:10,padding:"10px 10px",cursor:"pointer",
-                    textAlign:"left",display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontSize:20,flexShrink:0}}>{icon}</span>
-                  <div>
-                    <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,
-                      color:sel?"#1D4ED8":C.dark,lineHeight:1.2}}>{type}</div>
-                    <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,marginTop:1}}>{sub}</div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* ── Section tabs (scrollable) ── */}
-          <div style={{display:"flex",gap:5,overflowX:"auto",paddingBottom:2,marginBottom:10}}>
-            {SECTION_CONFIG.map((s,i)=>{
-              const sel = activeSection===s.id;
-              return (
-                <button key={s.id} onClick={()=>setActiveSection(s.id)}
-                  style={{flexShrink:0,padding:"7px 12px",borderRadius:16,border:"none",cursor:"pointer",
-                    fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:700,
-                    background:sel?C.blue:"#F1F5F9",color:sel?"#fff":C.muted}}>
-                  {s.icon} {s.label}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* ── Section progress bar ── */}
-          <div style={{display:"flex",alignItems:"center",gap:4,marginBottom:12}}>
-            {SECTION_CONFIG.map((s,i)=>(
-              <div key={s.id} style={{flex:1,height:3,borderRadius:2,
-                background:i<sectionIdx?C.blue:i===sectionIdx?"#0F1B2D":C.border}}/>
-            ))}
-            <span style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,
-              whiteSpace:"nowrap",marginLeft:5,fontWeight:600}}>
-              {sectionIdx+1}/5
-            </span>
-          </div>
-
-          {/* ════════════════════════════════════════
-              SECTION: PROPERTY — collapsible groups
-          ════════════════════════════════════════ */}
-          {activeSection==="property"&&(
-            <div style={{display:"flex",flexDirection:"column",gap:0}}>
-
-              {/* Group 1: Location */}
-              <PricerGroup open={openGroups["location"]} onToggle={()=>toggleGroup("location")} icon="📍" title="Location" badge={locality?"filled":null}>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                  <div><label style={LS}>City</label>
-                    <input value={city} onChange={e=>setCity(e.target.value)} style={IS} placeholder="Bengaluru"/>
-                  </div>
-                  <div><label style={LS}>Locality / Area *</label>
-                    <input value={locality} onChange={e=>setLocality(e.target.value)} style={IS} placeholder="e.g. Whitefield"/>
-                  </div>
-                </div>
-              </PricerGroup>
-
-              {/* Group 2: Unit Details */}
-              {!isPlot&&(
-                <PricerGroup open={openGroups["unit"]} onToggle={()=>toggleGroup("unit")} icon="🏠" title="Unit Details">
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                    <div><label style={LS}>BHK / Config</label>
-                      <select value={bhk} onChange={e=>setBhk(e.target.value)} style={IS}>
-                        {(BHK_OPTIONS||["Studio","1 BHK","2 BHK","3 BHK","4 BHK","5+ BHK"]).map(k=><option key={k}>{k}</option>)}
-                      </select>
-                    </div>
-                    <div><label style={LS}>Area Type</label>
-                      <select value={areaType} onChange={e=>setAreaType(e.target.value)} style={IS}>
-                        {(AREA_TYPES||["Carpet Area","Built-Up Area","Super Built-Up Area"]).map(k=><option key={k}>{k}</option>)}
-                      </select>
-                    </div>
-                  </div>
-                  <div>
-                    <label style={LS}>Area (sqft) — <strong style={{color:C.dark}}>{(+area||0).toLocaleString()}</strong></label>
-                    <input type="range" min={300} max={8000} step={50} value={area||1200} onChange={e=>setArea(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
-                    <div style={{display:"flex",justifyContent:"space-between",fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,marginTop:2}}>
-                      <span>300</span><span>8,000</span>
-                    </div>
-                  </div>
-                </PricerGroup>
-              )}
-
-              {isPlot&&(
-                <PricerGroup open={openGroups["unit"]} onToggle={()=>toggleGroup("unit")} icon="🏗️" title="Plot Details">
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                    <div>
-                      <label style={LS}>Plot Area — <strong style={{color:C.dark}}>{(+plotArea||0).toLocaleString()}</strong></label>
-                      <input type="range" min={100} max={20000} step={100} value={plotArea||1200} onChange={e=>setPlotArea(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
-                    </div>
-                    <div><label style={LS}>Unit</label>
-                      <select value={plotAreaUnit} onChange={e=>setPlotAreaUnit(e.target.value)} style={IS}>
-                        {["sqft","sqyd","guntha","acre","cents"].map(k=><option key={k}>{k}</option>)}
-                      </select>
-                    </div>
-                  </div>
-                </PricerGroup>
-              )}
-
-              {/* Group 3: Building */}
-              {!isPlot&&(
-                <PricerGroup open={openGroups["building"]} onToggle={()=>toggleGroup("building")} icon="🏗️" title="Building">
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                    <div><label style={LS}>Building Type</label>
-                      <select value={buildingType} onChange={e=>setBuildingType(e.target.value)} style={IS}>
-                        {(BUILDING_TYPES||["High Rise (>10 floors)","Mid Rise (5-10 floors)","Low Rise (<5 floors)"]).map(k=><option key={k}>{k}</option>)}
-                      </select>
-                    </div>
-                    <div><label style={LS}>Common Walls</label>
-                      <select value={commonWalls} onChange={e=>setCommonWalls(e.target.value)} style={IS}>
-                        {(COMMON_WALLS||["No Common Walls (Corner/End Unit)","1 Common Wall","2 Common Walls (Middle Unit)","3 Common Walls"]).map(k=><option key={k}>{k}</option>)}
-                      </select>
-                    </div>
-                  </div>
-                  {!isVilla&&(
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                      <div>
-                        <label style={LS}>Total Floors — <strong style={{color:C.dark}}>{totalFloors}</strong></label>
-                        <input type="range" min={1} max={60} value={totalFloors}
-                          onChange={e=>{setTotalFloors(+e.target.value);if(selectedFloor>+e.target.value)setSelectedFloor(+e.target.value);}}
-                          style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
-                      </div>
-                      <div>
-                        <label style={LS}>Your Floor — <strong style={{color:C.dark}}>{selectedFloor===0?"G":selectedFloor}</strong></label>
-                        <input type="range" min={0} max={totalFloors} value={selectedFloor}
-                          onChange={e=>setSelectedFloor(+e.target.value)}
-                          style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
-                      </div>
-                    </div>
-                  )}
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                    <div>
-                      <label style={LS}>Blocks — <strong style={{color:C.dark}}>{totalBlocks}</strong></label>
-                      <input type="range" min={1} max={30} value={totalBlocks} onChange={e=>setTotalBlocks(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
-                    </div>
-                    <div>
-                      <label style={LS}>Car Parking — <strong style={{color:C.dark}}>{carParking}</strong></label>
-                      <input type="range" min={0} max={4} value={carParking} onChange={e=>setCarParking(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
-                    </div>
-                  </div>
-                  {!isVilla&&(
-                    <div>
-                      <label style={LS}>Total Flats — <strong style={{color:C.dark}}>{totalFlatsInBuilding}</strong></label>
-                      <input type="range" min={4} max={2000} step={4} value={totalFlatsInBuilding} onChange={e=>setTotalFlatsInBuilding(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
-                      <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,marginTop:2}}>
-                        {totalFlatsInBuilding<=50?"Low density":totalFlatsInBuilding<=200?"Medium density":totalFlatsInBuilding<=500?"High density":"Very high density"}
-                      </div>
-                    </div>
-                  )}
-                </PricerGroup>
-              )}
-
-              {/* Group 4: Developer & Construction */}
-              <PricerGroup open={openGroups["developer"]} onToggle={()=>toggleGroup("developer")} icon="👷" title="Developer & Construction">
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                  <div><label style={LS}>Developer</label>
-                    <select value={developer} onChange={e=>setDeveloper(e.target.value)} style={IS}>
-                      {Object.keys(DEVELOPER_TIERS||{}).map(k=><option key={k}>{k}</option>)}
-                    </select>
-                  </div>
-                  <div><label style={LS}>Custom Premium (%)</label>
-                    <input value={customDevPremium} onChange={e=>setCustomDevPremium(e.target.value)} style={IS} placeholder="e.g. 25"/>
-                  </div>
-                  {!isPlot&&(
-                    <div><label style={LS}>Construction Status</label>
-                      <select value={constructionStatus} onChange={e=>setConstructionStatus(e.target.value)} style={IS}>
-                        {(CONSTRUCTION_STATUS||["Ready to Move / Possession","Under Construction (Near Completion)","Under Construction (Early Stage)","Pre-Launch / Booking Open"]).map(k=><option key={k}>{k}</option>)}
-                      </select>
-                    </div>
-                  )}
-                  {constructionStatus!=="Ready to Move / Possession"&&(
-                    <div><label style={LS}>Target Completion</label>
-                      <select value={completionYear} onChange={e=>setCompletionYear(+e.target.value)} style={IS}>
-                        {[2025,2026,2027,2028,2029,2030].map(y=><option key={y}>{y}</option>)}
-                      </select>
-                    </div>
-                  )}
-                  {!isPlot&&(
-                    <div><label style={LS}>Water Supply</label>
-                      <select value={waterQuality} onChange={e=>setWaterQuality(e.target.value)} style={IS}>
-                        {(WATER_QUALITY||["Corporation Supply","24×7 Treated Water","Treated / RO Water","Mixed (Borewell + Corp)","Borewell (Hard Water)"]).map(k=><option key={k}>{k}</option>)}
-                      </select>
-                    </div>
-                  )}
-                  {!isPlot&&(
-                    <div><label style={LS}>Building Age</label>
-                      <select value={age} onChange={e=>setAge(e.target.value)} style={IS}>
-                        {["New (0-2 yrs)","Recent (3-5 yrs)","Mid (6-10 yrs)","Old (11-20 yrs)","Very Old (20+ yrs)"].map(k=><option key={k}>{k}</option>)}
-                      </select>
-                    </div>
-                  )}
-                </div>
-              </PricerGroup>
-
-              {/* Group 5: Legal, Quality, Community */}
-              <PricerGroup open={openGroups["legal"]} onToggle={()=>toggleGroup("legal")} icon="⚖️" title="Legal & Approval">
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                  <div><label style={LS}>State</label>
-                    <select value={approvalState||detectStateFromCity(city)} onChange={e=>setApprovalState(e.target.value)} style={IS}>
-                      {Object.keys(APPROVAL_TYPES||{"Karnataka":[],"Maharashtra":[],"Other / Generic":[]}).map(k=><option key={k}>{k}</option>)}
-                    </select>
-                  </div>
-                  <div><label style={LS}>Approval / Khata</label>
-                    <select value={approvalType} onChange={e=>setApprovalType(e.target.value)} style={IS}>
-                      {((APPROVAL_TYPES||{})[approvalState||detectStateFromCity(city)]||(APPROVAL_TYPES||{})["Other / Generic"]||["RERA Registered"]).map(k=><option key={k}>{k}</option>)}
-                    </select>
-                  </div>
-                  <div><label style={LS}>Legal Status</label>
-                    <select value={legalStatus} onChange={e=>setLegalStatus(e.target.value)} style={IS}>
-                      {(LEGAL_STATUSES||["Clear Title","Title with Minor Encumbrance","Title Under Dispute","Leasehold"]).map(k=><option key={k}>{k}</option>)}
-                    </select>
-                  </div>
-                  <div><label style={LS}>Community Type</label>
-                    <select value={communityType} onChange={e=>setCommunityType(e.target.value)} style={IS}>
-                      {(COMMUNITY_TYPES||["Gated Community","Housing Society","Standalone Building","Township"]).map(k=><option key={k}>{k}</option>)}
-                    </select>
-                  </div>
-                </div>
-              </PricerGroup>
-
-              {/* Group 6: Quality */}
-              <PricerGroup open={openGroups["quality"]} onToggle={()=>toggleGroup("quality")} icon="🏆" title="Construction Quality">
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                  <div><label style={LS}>Build Quality</label>
-                    <select value={constructionQuality} onChange={e=>setConstructionQuality(e.target.value)} style={IS}>
-                      {(CONSTRUCTION_QUALITIES||["Premium (German/Italian fittings)","Standard (RCC, ISI materials)","Economy (Basic materials)","Luxury (Custom grade)"]).map(k=><option key={k}>{k}</option>)}
-                    </select>
-                  </div>
-                  <div><label style={LS}>Ventilation</label>
-                    <select value={ventilation} onChange={e=>setVentilation(e.target.value)} style={IS}>
-                      {(VENTILATION_OPTIONS||["Good (Cross ventilation)","Average (Single side)","Poor (Enclosed)"]).map(k=><option key={k}>{k}</option>)}
-                    </select>
-                  </div>
-                  {!isPlot&&(
-                    <div>
-                      <label style={LS}>Balconies — <strong style={{color:C.dark}}>{noBalconies}</strong></label>
-                      <input type="range" min={0} max={4} value={noBalconies} onChange={e=>setNoBalconies(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
-                    </div>
-                  )}
-                </div>
-              </PricerGroup>
-
-              {/* Group 7: Views & Special */}
-              <PricerGroup open={openGroups["views"]} onToggle={()=>toggleGroup("views")} icon="🌅" title="Views & Special Features">
-                <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-                  {[
-                    {l:"🏞️ Lake View",     s:hasLakeView,    f:setHasLakeView,   p:"+5-8%"},
-                    {l:"🌳 Garden View",   s:hasGardenView,  f:setHasGardenView, p:"+3-5%"},
-                    {l:"🌿 Park View",     s:hasParkView,    f:setHasParkView,   p:"+2-4%"},
-                    {l:"🌆 City View",     s:hasCityView,    f:setHasCityView,   p:"+3-6%"},
-                    {l:"🏠 Duplex",        s:hasDuplex,      f:setHasDuplex,     p:"+8-12%"},
-                    {l:"🛏️ Servant Room", s:hasServantRoom, f:setHasServantRoom,p:"+2-4%"},
-                  ].map(({l,s,f,p})=>(
-                    <button key={l} onClick={()=>f(!s)}
-                      style={{background:s?C.blue+"18":"#F8FAFB",border:`1px solid ${s?C.blue:C.border}`,
-                        color:s?C.blue:C.muted,borderRadius:16,padding:"5px 10px",
-                        fontFamily:"Inter,sans-serif",fontSize:10,cursor:"pointer",fontWeight:s?700:400,
-                        display:"flex",alignItems:"center",gap:4}}>
-                      {s&&"✓ "}{l}
-                      <span style={{fontSize:9,color:s?C.blue:"#94A3B8"}}>{p}</span>
-                    </button>
-                  ))}
-                </div>
-              </PricerGroup>
-
-              {/* Group 8: Maintenance */}
-              {!isPlot&&(
-                <PricerGroup open={openGroups["maintenance"]} onToggle={()=>toggleGroup("maintenance")} icon="🔧" title="Maintenance & Costs">
-                  {/* Segmented control — clear two-option picker */}
-                  <div style={{display:"flex",background:"#F1F5F9",borderRadius:9,padding:3,gap:3}}>
-                    <button onClick={()=>setAutoCalc(true)}
-                      style={{flex:1,padding:"8px 6px",borderRadius:7,border:"none",cursor:"pointer",
-                        fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,textAlign:"center",
-                        background:autoCalc?"#fff":"transparent",color:autoCalc?C.dark:C.muted,
-                        boxShadow:autoCalc?"0 1px 4px rgba(0,0,0,.1)":"none",transition:"all .15s"}}>
-                      ⚡ Auto-estimate
-                    </button>
-                    <button onClick={()=>setAutoCalc(false)}
-                      style={{flex:1,padding:"8px 6px",borderRadius:7,border:"none",cursor:"pointer",
-                        fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,textAlign:"center",
-                        background:!autoCalc?"#fff":"transparent",color:!autoCalc?C.dark:C.muted,
-                        boxShadow:!autoCalc?"0 1px 4px rgba(0,0,0,.1)":"none",transition:"all .15s"}}>
-                      ✏️ Enter manually
-                    </button>
-                  </div>
-                  {autoCalc?(()=>{
-                    const m=autoMaintCalc();
-                    // Shows estimated maintenance based on property details entered above
-                    return(
-                      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6}}>
-                        {[["Monthly",`₹${m.monthly.toLocaleString()}`,C.dark],
-                          ["Growth",m.cagr+"%/yr",C.green],
-                          ["Tax/yr","₹"+fmtL(m.tax),C.dark]].map(([l,v,col])=>(
-                          <div key={l} style={{background:"#F8FAFB",borderRadius:7,padding:"8px",textAlign:"center",border:`1px solid ${C.border}`}}>
-                            <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>{l}</div>
-                            <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:col}}>{v}</div>
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  })():(
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                      <div><label style={LS}>Monthly Maintenance</label>
-                        <input value={maintenanceCharge} onChange={e=>setMaintenanceCharge(e.target.value)} type="number" style={IS} placeholder="₹3,500"/>
-                      </div>
-                      <div><label style={LS}>Type</label>
-                        <select value={maintenanceType} onChange={e=>setMaintenanceType(e.target.value)} style={IS}>
-                          {["flat monthly charge","per sqft/month","quarterly","annual"].map(k=><option key={k}>{k}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                  )}
-                </PricerGroup>
-              )}
-
-              <PricerEstimateBar calcEstimate={calcEstimate} calcGST={calcGST} city={city}/>
-            </div>
-          )}
-
-          {/* ════════════════════════════════════════
-              SECTION: AMENITIES
-          ════════════════════════════════════════ */}
-          {activeSection==="amenities"&&!isPlot&&(
-            <div style={{display:"flex",flexDirection:"column",gap:10}}>
-              <div style={{display:"flex",gap:8,marginBottom:4}}>
-                {[["select","Select Individually"],["count","Just Enter Count"]].map(([m,l])=>(
-                  <button key={m} onClick={()=>setAmenityMode(m)}
-                    style={{flex:1,padding:"8px",fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,
-                      background:amenityMode===m?C.blue:"#F1F5F9",color:amenityMode===m?"#fff":C.muted,
-                      border:"none",borderRadius:8,cursor:"pointer"}}>
-                    {l}
-                  </button>
-                ))}
-              </div>
-              {amenityMode==="count"?(
-                <div>
-                  <label style={LS}>Total Amenities: <strong style={{color:C.dark}}>{amenityCount}</strong></label>
-                  <input type="range" min={0} max={100} value={amenityCount} onChange={e=>setAmenityCount(+e.target.value)} style={{width:"100%",marginTop:6,accentColor:C.blue}}/>
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,marginTop:6}}>
-                    Score: {amenityScore}/100 · Premium: ~₹{Math.round(getAmenityPremium()).toLocaleString()}/sqft
-                  </div>
-                </div>
-              ):(
-                <>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.muted}}>
-                      {selAmenities.length} selected · Score: <strong style={{color:scoreColor(amenityScore)}}>{amenityScore}/100</strong>
-                    </div>
-                    <button onClick={()=>setSelAmenities([])} style={{background:"none",border:"none",color:C.red,fontFamily:"Inter,sans-serif",fontSize:11,cursor:"pointer"}}>Clear</button>
-                  </div>
-                  {Object.entries(AMENITY_CATEGORIES||{}).map(([cat,data])=>(
-                    <div key={cat} style={{borderRadius:8,border:`1px solid ${C.border}`,overflow:"hidden"}}>
-                      <div onClick={()=>setExpandedCat(expandedCat===cat?null:cat)}
-                        style={{padding:"10px 12px",background:C.bg,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                        <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark}}>{cat}</div>
-                        <div style={{display:"flex",alignItems:"center",gap:8}}>
-                          <span style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted}}>
-                            {data.items.filter(a=>selAmenities.includes(a.id)).length}/{data.items.length}
-                            {data.items.filter(a=>selAmenities.includes(a.id)).length>0&&
-                              ` · +₹${Math.round(data.items.filter(a=>selAmenities.includes(a.id)).reduce((s,a)=>s+a.premium*data.weight,0)*area/1e5*10)/10}L`}
-                          </span>
-                          <span style={{color:C.muted,fontSize:13}}>{expandedCat===cat?"▲":"▼"}</span>
-                        </div>
-                      </div>
-                      {expandedCat===cat&&(
-                        <div style={{padding:"10px 12px",display:"flex",flexDirection:"column",gap:5}}>
-                          {data.items.map(a=>{
-                            const on=selAmenities.includes(a.id);
-                            const perSqft=Math.round(a.premium*data.weight);
-                            const rupees=perSqft*(+area||1200);
-                            return(
-                              <div key={a.id} onClick={()=>toggleAmenity(a.id)}
-                                style={{display:"flex",alignItems:"center",gap:8,padding:"7px 9px",borderRadius:8,cursor:"pointer",
-                                  border:`1.5px solid ${on?"#2563EB":C.border}`,background:on?"#EFF6FF":"#fff"}}>
-                                <div style={{width:18,height:18,borderRadius:5,flexShrink:0,
-                                  border:`1.5px solid ${on?"#2563EB":C.border}`,background:on?"#2563EB":"#fff",
-                                  display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:10}}>{on?"✓":""}</div>
-                                <div style={{flex:1,fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,color:on?"#1D4ED8":C.dark}}>
-                                  {a.essential&&"⭐ "}{a.label}
-                                </div>
-                                <div style={{flexShrink:0,textAlign:"right"}}>
-                                  <div style={{fontFamily:"Inter,sans-serif",fontSize:9,fontWeight:700,color:on?"#2563EB":"#94A3B8"}}>₹{perSqft}/sqft</div>
-                                  <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:on?"#15803D":"#94A3B8"}}>{on?"+"+fmt(rupees):"if selected"}</div>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </>
-              )}
-              <PricerEstimateBar calcEstimate={calcEstimate} calcGST={calcGST} city={city}/>
-            </div>
-          )}
-
-          {/* ════════════════════════════════════════
-              SECTION: CIVIC & INFRA
-          ════════════════════════════════════════ */}
-          {activeSection==="civic"&&(
-            <div style={{display:"flex",flexDirection:"column",gap:10}}>
-              <div style={{borderRadius:8,border:`1px solid ${C.border}`,overflow:"hidden"}}>
-                <div style={{padding:"10px 12px",background:C.bg,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark}}>🏛️ Civic Conditions</div>
-                  <div style={{background:scoreColor(civicScore),color:"#fff",borderRadius:6,padding:"2px 10px",
-                    fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12}}>Score {civicScore}/100</div>
-                </div>
-                <div style={{padding:"10px 12px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                  <div>
-                    <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.green,fontWeight:600,marginBottom:6}}>✅ Positives</div>
-                    {(CIVIC_FACTORS||[]).filter(f=>f.positive).map(f=>{
-                      const on=civicGood.includes(f.id);
-                      return <button key={f.id} onClick={()=>toggleCivicGood(f.id)}
-                        style={{display:"block",width:"100%",textAlign:"left",marginBottom:4,
-                          background:on?"#F0FDF4":"#F8FAFB",border:`1px solid ${on?C.green:C.border}`,
-                          borderRadius:6,padding:"5px 8px",fontFamily:"Inter,sans-serif",fontSize:10,
-                          color:on?C.green:C.muted,cursor:"pointer",fontWeight:on?600:400}}>
-                        {on?"✓ ":""}{f.label}
-                      </button>;
-                    })}
-                  </div>
-                  <div>
-                    <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.red,fontWeight:600,marginBottom:6}}>⚠️ Issues</div>
-                    {(CIVIC_FACTORS||[]).filter(f=>!f.positive).map(f=>{
-                      const on=civicBad.includes(f.id);
-                      return <button key={f.id} onClick={()=>toggleCivicBad(f.id)}
-                        style={{display:"block",width:"100%",textAlign:"left",marginBottom:4,
-                          background:on?"#FFF5F5":"#F8FAFB",border:`1px solid ${on?C.red:C.border}`,
-                          borderRadius:6,padding:"5px 8px",fontFamily:"Inter,sans-serif",fontSize:10,
-                          color:on?C.red:C.muted,cursor:"pointer",fontWeight:on?600:400}}>
-                        {on?"✓ ":""}{f.label}
-                      </button>;
-                    })}
-                  </div>
-                </div>
-              </div>
-              <div style={{borderRadius:8,border:`1px solid ${C.border}`,padding:12}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark}}>🏙️ Nearby Facilities</div>
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.blue}}>+₹{infraPremium.toLocaleString()}/sqft</div>
-                </div>
-                <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-                  {(INFRA_ITEMS||[]).map(item=>{
-                    const on=selInfra.includes(item.id);
-                    return <button key={item.id} onClick={()=>toggleInfra(item.id)}
-                      style={{background:on?C.lightBlue:"#F8FAFB",border:`1px solid ${on?C.blue:C.border}`,
-                        color:on?C.blue:C.muted,borderRadius:14,padding:"4px 9px",
-                        fontFamily:"Inter,sans-serif",fontSize:10,cursor:"pointer",fontWeight:on?600:400}}>
-                      {item.icon} {on?"✓ ":""}{item.label}
-                    </button>;
-                  })}
-                </div>
-              </div>
-              <PricerEstimateBar calcEstimate={calcEstimate} calcGST={calcGST} city={city}/>
-            </div>
-          )}
-
-          {/* ════════════════════════════════════════
-              SECTION: PRICING
-          ════════════════════════════════════════ */}
-          {activeSection==="pricing"&&(
-            <div style={{display:"flex",flexDirection:"column",gap:10}}>
-              <div style={{background:C.lightBlue,borderRadius:8,padding:12}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted}}>Formula estimate</div>
-                  <ProvenanceBadge type="curated"/>
-                </div>
-                {locality?(()=>{const e=calcEstimate();const gst=calcGST(e.total);return(
-                  <div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:gst.amount?8:0}}>
-                      <div>
-                        <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:18,color:C.blue}}>
-                          ₹{e.rate.toLocaleString()}<span style={{fontSize:11,fontWeight:400}}>/sqft</span>
-                        </div>
-                        <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted}}>Total: ₹{fmtL(e.total)}</div>
-                      </div>
-                      <div>
-                        <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted}}>Range</div>
-                        <div style={{fontFamily:"Inter,sans-serif",fontSize:13,fontWeight:600,color:C.dark}}>₹{fmtL(e.low)} – ₹{fmtL(e.high)}</div>
-                      </div>
-                    </div>
-                    {gst.amount>0&&(
-                      <div style={{background:"#FEF9C3",borderRadius:6,padding:"6px 10px",fontFamily:"Inter,sans-serif",fontSize:11,color:"#92400E"}}>
-                        🧾 GST ({gst.rate}%): +₹{fmtL(gst.amount)} → Total with GST: ₹{fmtL(gst.total)}
-                      </div>
-                    )}
-                  </div>
-                );})():<div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.muted}}>Enter locality to see estimate</div>}
-              </div>
-              {priceCorrections.length>0&&(
-                <div style={{background:"#F0FDF4",borderRadius:8,padding:"10px 12px",fontFamily:"Inter,sans-serif",fontSize:11,color:C.green}}>
-                  ✓ {priceCorrections.length} correction(s) applied · Factor: {normCorrFactor.toFixed(2)}x
-                </div>
-              )}
-              <div style={{borderRadius:8,border:`1px solid ${C.border}`,padding:12}}>
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark,marginBottom:6}}>📊 Your Known Market Range (optional)</div>
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,marginBottom:8}}>If you know local rates, enter them. AI will blend with market data.</div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                  <div><label style={LS}>Min ₹/sqft</label><input value={userMinPrice} onChange={e=>setUserMinPrice(e.target.value)} type="number" style={IS} placeholder="e.g. 5500"/></div>
-                  <div><label style={LS}>Max ₹/sqft</label><input value={userMaxPrice} onChange={e=>setUserMaxPrice(e.target.value)} type="number" style={IS} placeholder="e.g. 8500"/></div>
-                </div>
-              </div>
-              {constructionStatus!=="Ready to Move / Possession"&&locality&&(()=>{
-                const e=calcEstimate();
-                const postCompletion=Math.round(e.rate*(1+(appreciationOnCompletion||0)/100));
-                const gst=calcGST(e.total);
-                return(
-                  <div style={{background:"#FFFBEB",borderRadius:8,border:"1px solid #FDE68A",padding:12}}>
-                    <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:"#92400E",marginBottom:8}}>📈 Investor View — Under Construction</div>
-                    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:8}}>
-                      {[["Book Now",`₹${e.rate.toLocaleString()}/sqft`,`${((constFactor||1)*100-100).toFixed(0)}% disc`],
-                        ["At Completion",`~₹${postCompletion.toLocaleString()}/sqft`,`+${appreciationOnCompletion||0}%`],
-                        ["Unit Gain",`₹${fmtL((postCompletion-e.rate)*(isPlot?plotArea:(+area||1200)))}`,`expected`]
-                      ].map(([l,v,s])=>(
-                        <div key={l} style={{textAlign:"center",background:"rgba(255,255,255,.6)",borderRadius:7,padding:"8px 4px"}}>
-                          <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:"#92400E"}}>{l}</div>
-                          <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:C.dark}}>{v}</div>
-                          <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:"#92400E"}}>{s}</div>
-                        </div>
-                      ))}
-                    </div>
-                    <div style={{background:"#FEF9C3",borderRadius:6,padding:"6px 10px",fontFamily:"Inter,sans-serif",fontSize:11,color:"#92400E"}}>
-                      🧾 {gst.note}
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-          )}
-
-          {/* ════════════════════════════════════════
-              SECTION: UDS & LOAN
-          ════════════════════════════════════════ */}
-          {activeSection==="uds"&&!isPlot&&(
-            <div style={{display:"flex",flexDirection:"column",gap:10}}>
-              <div style={{background:"#EFF6FF",borderRadius:8,padding:"10px 12px",fontFamily:"Inter,sans-serif",fontSize:11,color:C.dark,lineHeight:1.6}}>
-                📜 <strong>UDS</strong> = your % land ownership. Even in an apartment you co-own a fraction of the land — this shows its future value vs total holding costs.
-              </div>
-
-              <PricerGroup open={openGroups["uds_land"]} onToggle={()=>toggleGroup("uds_land")} icon="🌍" title="Land & UDS">
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                  <div><label style={LS}>Your UDS (%)</label>
-                    <input value={udsPercent} onChange={e=>setUdsPercent(e.target.value)} type="number" style={IS} placeholder="e.g. 0.85"/>
-                  </div>
-                  <div><label style={LS}>Total Land Area (sqft)</label>
-                    <input value={totalLandArea} onChange={e=>setTotalLandArea(e.target.value)} type="number" style={IS} placeholder="e.g. 43560"/>
-                  </div>
-                </div>
-                {udsPercent&&totalLandArea&&(
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.blue,fontWeight:600}}>
-                    Your land share: {(parseFloat(totalLandArea)*parseFloat(udsPercent)/100).toFixed(1)} sqft
-                  </div>
-                )}
-              </PricerGroup>
-
-              <PricerGroup open={openGroups["uds_loan"]} onToggle={()=>toggleGroup("uds_loan")} icon="🏦" title="Loan Details">
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                  <div><label style={LS}>Loan Amount (₹)</label>
-                    <input value={loanAmount} onChange={e=>setLoanAmount(e.target.value)} type="number" style={IS} placeholder="e.g. 60,00,000"/>
-                  </div>
-                  <div><label style={LS}>Down Payment (₹)</label>
-                    <input value={downPayment} onChange={e=>setDownPayment(e.target.value)} type="number" style={IS} placeholder="e.g. 15,00,000"/>
-                  </div>
-                </div>
-                <div>
-                  <label style={LS}>Interest Rate — <strong style={{color:C.dark}}>{loanInterestRate}%</strong></label>
-                  <input type="range" min={6} max={14} step={0.1} value={loanInterestRate} onChange={e=>setLoanInterestRate(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
-                  <div style={{display:"flex",justifyContent:"space-between",fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,marginTop:2}}><span>6%</span><span>14%</span></div>
-                </div>
-                <div>
-                  <label style={LS}>Tenure — <strong style={{color:C.dark}}>{loanTenureYears} yrs</strong></label>
-                  <input type="range" min={5} max={30} value={loanTenureYears} onChange={e=>setLoanTenureYears(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
-                </div>
-              </PricerGroup>
-
-              <PricerGroup open={openGroups["uds_costs"]} onToggle={()=>toggleGroup("uds_costs")} icon="💸" title="Annual Holding Costs">
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                  <div><label style={LS}>Maintenance (₹/yr)
-                    {maintenanceCharge&&!annualMaintenance&&<span style={{color:C.blue,fontSize:9,marginLeft:4}}>
-                      auto-filled from Property tab</span>}
-                  </label>
-                    <input value={annualMaintenance}
-                      onChange={e=>setAnnualMaintenance(e.target.value)}
-                      type="number" style={IS}
-                      placeholder={maintenanceCharge
-                        ? `₹${Math.round(parseFloat(maintenanceCharge)*(maintenanceType==="per sqft/month"?(+area||1200)*12:maintenanceType==="quarterly"?4:maintenanceType==="annual"?1:12)).toLocaleString()} (from Property tab)`
-                        : "e.g. 42,000"}/>
-                  </div>
-                  <div><label style={LS}>Repairs (₹/yr)</label>
-                    <input value={annualRepairs} onChange={e=>setAnnualRepairs(e.target.value)} type="number" style={IS} placeholder="e.g. 15,000"/>
-                  </div>
-                  <div><label style={LS}>Property Tax (₹/yr)</label>
-                    <input value={propertyTaxAnnual} onChange={e=>setPropertyTaxAnnual(e.target.value)} type="number" style={IS} placeholder="e.g. 8,000"/>
-                  </div>
-                  <div>
-                    <label style={LS}>Land Appreciation — <strong style={{color:C.dark}}>{landAppreciationRate}%/yr</strong></label>
-                    <input type="range" min={3} max={20} value={landAppreciationRate} onChange={e=>setLandAppreciationRate(+e.target.value)} style={{width:"100%",marginTop:4,accentColor:C.blue,cursor:"ew-resize",touchAction:"none"}}/>
-                  </div>
-                </div>
-              </PricerGroup>
-
-              {/* UDS Results */}
-              {udsPercent&&totalLandArea&&loanAmount&&(()=>{
-                const P=parseFloat(loanAmount);
-                const r=loanInterestRate/12/100;
-                const n=loanTenureYears*12;
-                const emi=P*r*Math.pow(1+r,n)/(Math.pow(1+r,n)-1);
-                const totalPaid=emi*n;
-                const totalInterest=totalPaid-P;
-                const dp=parseFloat(downPayment)||0;
-                // Use manual maintenance charge from Property tab if annualMaintenance not set
-                const effectiveAnnualMaint = parseFloat(annualMaintenance) > 0
-                  ? parseFloat(annualMaintenance)
-                  : maintenanceCharge
-                    ? (maintenanceType==="per sqft/month" ? parseFloat(maintenanceCharge)*(+area||1200)*12
-                      : maintenanceType==="quarterly"    ? parseFloat(maintenanceCharge)*4
-                      : maintenanceType==="annual"       ? parseFloat(maintenanceCharge)
-                      : parseFloat(maintenanceCharge)*12) // flat monthly × 12
-                    : autoMaintCalc().annual;
-                const maintTotal=effectiveAnnualMaint*loanTenureYears;
-                const repairsTotal=(parseFloat(annualRepairs)||0)*loanTenureYears;
-                const taxTotal=(parseFloat(propertyTaxAnnual)||0)*loanTenureYears;
-                const totalSpent=totalPaid+dp+maintTotal+repairsTotal+taxTotal;
-                const myLandSqft=parseFloat(totalLandArea)*parseFloat(udsPercent)/100;
-                const currentLandValue=myLandSqft*calcEstimate().rate;
-                const futureLandValue=currentLandValue*Math.pow(1+landAppreciationRate/100,loanTenureYears);
-                const netPosition=futureLandValue-totalSpent;
-                return(
-                  <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                    <div style={{background:C.navy,borderRadius:10,padding:"14px 16px"}}>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                        <div>
-                          <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#94A3B8"}}>Monthly EMI</div>
-                          <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:18,color:"#F8FAFB"}}>₹{Math.round(emi).toLocaleString()}</div>
-                        </div>
-                        <div>
-                          <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#94A3B8"}}>Total Interest</div>
-                          <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:18,color:"#FCA5A5"}}>₹{fmtL(totalInterest)}</div>
-                        </div>
-                      </div>
-                    </div>
-                    <div style={{background:"#fff",borderRadius:10,border:`1px solid ${C.border}`,padding:12}}>
-                      <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:C.dark,marginBottom:8}}>💸 Total Spend Over {loanTenureYears} Years</div>
-                      {[["Down Payment",dp],["Principal",P],["Interest",totalInterest],["Maintenance",maintTotal],["Repairs",repairsTotal],["Property Tax",taxTotal]].map(([l,v])=>(
-                        <div key={l} style={{display:"flex",justifyContent:"space-between",fontFamily:"Inter,sans-serif",fontSize:12,padding:"3px 0"}}>
-                          <span style={{color:C.muted}}>{l}</span>
-                          <span style={{color:C.dark,fontWeight:600}}>₹{fmtL(v)}</span>
-                        </div>
-                      ))}
-                      <div style={{borderTop:`1px solid ${C.border}`,marginTop:6,paddingTop:8,display:"flex",justifyContent:"space-between"}}>
-                        <span style={{fontFamily:"Inter,sans-serif",fontSize:13,fontWeight:700,color:C.dark}}>Total Spent</span>
-                        <span style={{fontFamily:"Inter,sans-serif",fontSize:14,fontWeight:700,color:C.red}}>₹{fmtL(totalSpent)}</span>
-                      </div>
-                    </div>
-                    <div style={{background:"#F0FDF4",borderRadius:10,border:"1px solid #86EFAC",padding:12}}>
-                      <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:C.green,marginBottom:6}}>🌱 UDS Land Value Growth</div>
-                      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-                        {[["Now",currentLandValue],["At Loan End",futureLandValue],["Land Gain",futureLandValue-currentLandValue]].map(([l,v],i)=>(
-                          <div key={l} style={{textAlign:"center",background:"#fff",borderRadius:8,padding:"9px 6px"}}>
-                            <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>{l}</div>
-                            <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:i===2?C.blue:i===1?C.green:C.dark}}>₹{fmtL(v)}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div style={{background:netPosition>=0?"#F0FDF4":"#FFF7F5",borderRadius:10,
-                      border:`1px solid ${netPosition>=0?"#86EFAC":"#FED7CC"}`,padding:12}}>
-                      <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:netPosition>=0?C.green:C.red,marginBottom:4}}>
-                        {netPosition>=0?"✅ Positive Net Position":"⚠️ Negative Net Position"}
-                      </div>
-                      <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark,lineHeight:1.7}}>
-                        Land value (₹{fmtL(futureLandValue)}) {netPosition>=0?"exceeds":"is less than"} total spent (₹{fmtL(totalSpent)}) by{" "}
-                        <strong style={{color:netPosition>=0?C.green:C.red}}>₹{fmtL(Math.abs(netPosition))}</strong>.
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-              {(!udsPercent||!totalLandArea||!loanAmount)&&(
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.muted,textAlign:"center",padding:20}}>
-                  Fill UDS %, total land area, and loan amount above to see calculations.
-                </div>
-              )}
-            </div>
-          )}
-
-          {error&&<div style={{color:C.red,fontFamily:"Inter,sans-serif",fontSize:11,padding:"8px 12px",
-            background:"#FFF5F5",borderRadius:8,marginTop:8,wordBreak:"break-all"}}>{error}</div>}
-
-          <button onClick={analyze} disabled={loading||!locality.trim()}
-            style={{marginTop:12,width:"100%",background:loading?C.muted:C.navy,color:"#fff",border:"none",
-              borderRadius:8,padding:"13px",fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,
-              cursor:loading?"default":"pointer",opacity:!locality.trim()?0.6:1}}>
-            {loading?"Analyzing…":"Analyze Price Accuracy →"}
-          </button>
         </div>
       )}
 
+      {/* ── FULL VALUATION MODE ─────────────────────────────────────────────── */}
+      {mode==="full"&&(()=>{
+        const sIdx = SECTION_CONFIG.findIndex(s=>s.id===activeSection);
+        const goNext = () => { if(sIdx < SECTION_CONFIG.length-1) setActiveSection(SECTION_CONFIG[sIdx+1].id); };
+        const goPrev = () => { if(sIdx > 0) setActiveSection(SECTION_CONFIG[sIdx-1].id); };
 
-      {/* ══════════════════════════════════════════════════════════════════
-          RESULTS — shown for Full Valuation mode
-      ══════════════════════════════════════════════════════════════════ */}
-      {mode==="full"&&result&&(()=>{
-        const vc=verdictColor(result.accuracy_verdict);
-        const aiRate=result.market_rate_sqft||result.our_estimate?.rate;
-        const ourRate=result.our_estimate?.rate||aiRate;
-        const diff=Math.round(((aiRate-ourRate)/ourRate)*100);
-        const blendedRate=userMinPrice&&userMaxPrice?Math.round((aiRate*2+(+userMinPrice+(+userMaxPrice))/2)/3):aiRate;
-        const estArea=isPlot?plotArea:area;
-        return(
-          <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        return (
+          <div style={{margin:"0 12px",background:"#fff",borderRadius:12,
+            border:`1px solid ${C.border}`,padding:12,display:"flex",flexDirection:"column",gap:12}}>
 
-            {/* Header */}
-            <div style={{background:C.navy,borderRadius:12,padding:"18px 20px"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                <div style={{color:"#94A3B8",fontSize:10,fontFamily:"Inter,sans-serif",textTransform:"uppercase",letterSpacing:1.2}}>
-                  {locality}, {city} · {propType} {!isPlot&&`· ${bhk}`}
-                </div>
-                <ProvenanceBadge type="ai"/>
-              </div>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
-                <div>
-                  <div style={{color:"#F8FAFB",fontSize:22,fontFamily:"serif",marginBottom:2}}>
-                    ₹{aiRate?.toLocaleString()}<span style={{fontSize:13,color:"#94A3B8"}}>/sqft (AI Market)</span>
+            {/* ── Step Progress ─────────────────────────────────────────── */}
+            <div style={{display:"flex",position:"relative",marginBottom:4}}>
+              <div style={{position:"absolute",top:12,left:"10%",right:"10%",height:2,background:C.border,zIndex:0}}/>
+              <div style={{position:"absolute",top:12,left:"10%",height:2,zIndex:1,background:C.blue,
+                width:`${(sIdx/(SECTION_CONFIG.length-1))*80}%`,transition:"width 0.3s"}}/>
+              {SECTION_CONFIG.map(({id,label,icon},i)=>(
+                <div key={id} onClick={()=>setActiveSection(id)}
+                  style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:"pointer",zIndex:2}}>
+                  <div style={{width:24,height:24,borderRadius:"50%",display:"flex",alignItems:"center",
+                    justifyContent:"center",fontSize:11,fontWeight:700,transition:"all 0.2s",
+                    background:i<sIdx?"#059669":i===sIdx?C.blue:C.border,
+                    color:i<=sIdx?"#fff":"#94A3B8",border:`2px solid ${i<sIdx?"#059669":i===sIdx?C.blue:C.border}`}}>
+                    {i<sIdx?"✓":icon}
                   </div>
-                  {userMinPrice&&userMaxPrice&&<div style={{color:"#94A3B8",fontSize:12,fontFamily:"Inter,sans-serif"}}>
-                    Blended: ₹{blendedRate.toLocaleString()}/sqft · ₹{fmtL(blendedRate*estArea)}
-                  </div>}
-                  <div style={{color:"#94A3B8",fontSize:12,fontFamily:"Inter,sans-serif",marginTop:2}}>
-                    Range: ₹{fmtL(result.low_estimate)} – ₹{fmtL(result.high_estimate)}
-                  </div>
-                  {result.gst_applicable&&result.gst_amount>0&&(
-                    <div style={{color:"#FCD34D",fontSize:11,fontFamily:"Inter,sans-serif",marginTop:3}}>
-                      + GST ({result.gst_rate_pct}%): ₹{fmtL(result.gst_amount)} → Total: ₹{fmtL(result.total_with_gst)}
-                    </div>
-                  )}
-                </div>
-                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:5}}>
-                  <div style={{background:vc,color:"#fff",borderRadius:8,padding:"5px 14px",fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13}}>{result.accuracy_verdict}</div>
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#94A3B8"}}>
-                    {result.price_trend==="Rising"?"📈":result.price_trend==="Declining"?"📉":"➡️"} {result.price_trend} · {result.yoy_appreciation_pct}% YoY
-                    {result._premium&&<span style={{fontSize:9,color:"#94A3B8",marginLeft:6}}>
-                      +₹{(result._premium/1000).toFixed(1)}k/sqft area premium
-                    </span>}
-                  </div>
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#94A3B8"}}>Best for: <strong style={{color:"#F8FAFB"}}>{result.best_for}</strong></div>
-                </div>
-              </div>
-            </div>
-
-            {/* Score cards */}
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:8}}>
-              {[
-                {l:"Formula Est.",v:"₹"+ourRate?.toLocaleString()+"/sqft",sub:"Amenity+Infra+Civic",c:C.muted},
-                {l:"AI Market Rate",v:"₹"+aiRate?.toLocaleString()+"/sqft",sub:result.verdict_reason?.slice(0,50),c:vc},
-                {l:"Gap",v:(diff>0?"+":"")+diff+"%",sub:Math.abs(diff)<5?"Aligned":Math.abs(diff)<15?"Moderate":"Large variance",c:Math.abs(diff)<5?C.green:Math.abs(diff)<15?C.amber:C.red},
-              ].map(m=>(
-                <div key={m.l} style={{background:"#fff",borderRadius:9,border:`1px solid ${C.border}`,padding:10}}>
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,marginBottom:2}}>{m.l}</div>
-                  <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:m.c}}>{m.v}</div>
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,marginTop:2,lineHeight:1.4}}>{m.sub}</div>
+                  <div style={{fontSize:8,fontWeight:i===sIdx?700:500,
+                    color:i===sIdx?C.blue:i<sIdx?"#059669":"#94A3B8"}}>{label}</div>
                 </div>
               ))}
             </div>
 
-            {/* Price projection chart */}
-            {aiRate&&(()=>{
-              const yoy=result.yoy_appreciation_pct||8;
-              const pts=[
-                {yr:"Now",r:aiRate,t:aiRate*estArea},
-                {yr:"1Y",r:Math.round(aiRate*Math.pow(1+yoy/100,1)),t:0},
-                {yr:"3Y",r:Math.round(aiRate*Math.pow(1+yoy/100,3)),t:0},
-                {yr:"5Y",r:Math.round(aiRate*Math.pow(1+yoy/100,5)),t:0},
-                {yr:"10Y",r:Math.round(aiRate*Math.pow(1+yoy/100,10)),t:0},
-              ].map(p=>({...p,t:p.r*estArea}));
-              const maxR=Math.max(...pts.map(p=>p.r));
-              const colors=["#94A3B8","#60A5FA","#F59E0B","#34D399","#1E6B4A"];
-              return(
-                <div style={{background:"#fff",borderRadius:10,border:"1px solid "+C.border,padding:14}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                    <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.dark}}>📈 Price Projection</div>
-                    <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.green,fontWeight:600}}>{yoy}% YoY est.</div>
+            {/* ── STEP 1: PROPERTY ─────────────────────────────────────── */}
+            {activeSection==="property"&&(
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+
+                {/* Location */}
+                <div>
+                  <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",
+                    letterSpacing:"0.5px",marginBottom:6,display:"flex",alignItems:"center",gap:5}}>
+                    <span style={{width:3,height:14,background:C.blue,borderRadius:2,display:"inline-block"}}/>
+                    Location
                   </div>
-                  <div style={{display:"flex",alignItems:"flex-end",gap:8,height:70,marginBottom:4}}>
-                    {pts.map((pt,i)=>{
-                      const h=Math.max(12,Math.round((pt.r/maxR)*60));
+                  <PricerLocationSearch
+                    value={locality}
+                    onChange={v=>{ setLocality(v); if(pricerPlaceData&&v!==pricerPlaceData.display) setPricerPlaceData(null); }}
+                    onSelect={pd=>{ setPricerPlaceData(pd); setLocality(pd.display); if(pd.city) setCity(pd.city); }}
+                  />
+                  {locality&&pricerPlaceData&&(
+                    <div style={{fontSize:9,color:"#059669",fontWeight:600,marginTop:3}}>✓ Verified by Google Maps</div>
+                  )}
+                </div>
+
+                {/* Unit Details */}
+                {!isPlot&&(
+                  <div>
+                    <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",
+                      letterSpacing:"0.5px",marginBottom:6,display:"flex",alignItems:"center",gap:5}}>
+                      <span style={{width:3,height:14,background:"#059669",borderRadius:2,display:"inline-block"}}/>
+                      Unit Details
+                    </div>
+                    <div style={{display:"flex",gap:8,marginBottom:8}}>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>BHK / Config</div>
+                        <select value={bhk} onChange={e=>setBhk(e.target.value)} style={{...IS,width:"100%"}}>
+                          {(BHK_OPTIONS||[]).map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      </div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Area Type</div>
+                        <select value={areaType} onChange={e=>setAreaType(e.target.value)} style={{...IS,width:"100%"}}>
+                          {(AREA_TYPES||[]).map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>
+                      Area (sqft) — <strong style={{color:C.dark}}>{(+area||1200).toLocaleString()}</strong>
+                    </div>
+                    <input type="range" min={300} max={8000} step={50} value={area||1200}
+                      onChange={e=>setArea(+e.target.value)}
+                      style={{width:"100%",accentColor:C.blue,touchAction:"none",cursor:"ew-resize"}}/>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:C.muted,marginTop:2}}>
+                      <span>300</span><span>8,000</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Plot Details */}
+                {isPlot&&(
+                  <div>
+                    <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",
+                      letterSpacing:"0.5px",marginBottom:6,display:"flex",alignItems:"center",gap:5}}>
+                      <span style={{width:3,height:14,background:"#059669",borderRadius:2,display:"inline-block"}}/>
+                      Plot Details
+                    </div>
+                    <div style={{display:"flex",gap:8}}>
+                      <div style={{flex:2}}>
+                        <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Plot Area</div>
+                        <input type="number" value={plotArea} onChange={e=>setPlotArea(+e.target.value)}
+                          style={{...IS,width:"100%"}} placeholder="e.g. 1200"/>
+                      </div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Unit</div>
+                        <select value={plotAreaUnit} onChange={e=>setPlotAreaUnit(e.target.value)} style={{...IS,width:"100%"}}>
+                          {["sqft","sqyard","acres","cents","guntas"].map(u=><option key={u}>{u}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Building (not for plot) */}
+                {!isPlot&&!isVilla&&(
+                  <div>
+                    <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",
+                      letterSpacing:"0.5px",marginBottom:6,display:"flex",alignItems:"center",gap:5}}>
+                      <span style={{width:3,height:14,background:"#F59E0B",borderRadius:2,display:"inline-block"}}/>
+                      Building
+                    </div>
+                    <div style={{display:"flex",gap:8,marginBottom:8}}>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Building Type</div>
+                        <select value={buildingType} onChange={e=>setBuildingType(e.target.value)} style={{...IS,width:"100%"}}>
+                          {(BUILDING_TYPES||[]).map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      </div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Common Walls</div>
+                        <select value={commonWalls} onChange={e=>setCommonWalls(e.target.value)} style={{...IS,width:"100%"}}>
+                          {(COMMON_WALLS||[]).map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{display:"flex",gap:16,marginBottom:8}}>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Total Floors — <strong style={{color:C.dark}}>{totalFloors}</strong></div>
+                        <input type="range" min={1} max={50} value={totalFloors} onChange={e=>setTotalFloors(+e.target.value)}
+                          style={{width:"100%",accentColor:C.blue,touchAction:"none"}}/>
+                      </div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Your Floor — <strong style={{color:C.dark}}>{selectedFloor}</strong></div>
+                        <input type="range" min={0} max={totalFloors} value={selectedFloor} onChange={e=>setSelectedFloor(+e.target.value)}
+                          style={{width:"100%",accentColor:C.blue,touchAction:"none"}}/>
+                      </div>
+                    </div>
+                    <div style={{display:"flex",gap:16,marginBottom:4}}>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Blocks — <strong style={{color:C.dark}}>{totalBlocks}</strong></div>
+                        <input type="range" min={1} max={20} value={totalBlocks} onChange={e=>setTotalBlocks(+e.target.value)}
+                          style={{width:"100%",accentColor:C.blue,touchAction:"none"}}/>
+                      </div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Car Parking — <strong style={{color:C.dark}}>{carParking}</strong></div>
+                        <input type="range" min={0} max={4} value={carParking} onChange={e=>setCarParking(+e.target.value)}
+                          style={{width:"100%",accentColor:C.blue,touchAction:"none"}}/>
+                      </div>
+                    </div>
+                    <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Total Flats — <strong style={{color:C.dark}}>{totalFlatsInBuilding}</strong></div>
+                    <input type="range" min={4} max={1000} step={4} value={totalFlatsInBuilding}
+                      onChange={e=>setTotalFlatsInBuilding(+e.target.value)}
+                      style={{width:"100%",accentColor:C.blue,touchAction:"none"}}/>
+                  </div>
+                )}
+
+                {/* Developer & Construction */}
+                <div>
+                  <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",
+                    letterSpacing:"0.5px",marginBottom:6,display:"flex",alignItems:"center",gap:5}}>
+                    <span style={{width:3,height:14,background:"#8B5CF6",borderRadius:2,display:"inline-block"}}/>
+                    Developer & Construction
+                  </div>
+                  <div style={{display:"flex",gap:8,marginBottom:8}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Developer</div>
+                      <select value={developer} onChange={e=>setDeveloper(e.target.value)} style={{...IS,width:"100%"}}>
+                        {Object.entries(DEVELOPER_TIERS||{}).map(([k])=><option key={k}>{k}</option>)}
+                      </select>
+                    </div>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Status</div>
+                      <select value={constructionStatus} onChange={e=>setConstructionStatus(e.target.value)} style={{...IS,width:"100%"}}>
+                        {(CONSTRUCTION_STATUS||[]).map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Water Supply</div>
+                      <select value={waterQuality} onChange={e=>setWaterQuality(e.target.value)} style={{...IS,width:"100%"}}>
+                        {(WATER_QUALITY||[]).map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </div>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Building Age</div>
+                      <select value={age} onChange={e=>setAge(e.target.value)} style={{...IS,width:"100%"}}>
+                        {["New (0-2 yrs)","2-5 yrs","5-10 yrs","10-20 yrs","20+ yrs"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Legal & Approval */}
+                <div>
+                  <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",
+                    letterSpacing:"0.5px",marginBottom:6,display:"flex",alignItems:"center",gap:5}}>
+                    <span style={{width:3,height:14,background:"#EF4444",borderRadius:2,display:"inline-block"}}/>
+                    Legal & Approval
+                  </div>
+                  <div style={{display:"flex",gap:8,marginBottom:8}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>State</div>
+                      <select value={approvalState} onChange={e=>setApprovalState(e.target.value)} style={{...IS,width:"100%"}}>
+                        {Object.keys(APPROVAL_TYPES||{}).map(s=><option key={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Approval / Khata</div>
+                      <select value={approvalType} onChange={e=>setApprovalType(e.target.value)} style={{...IS,width:"100%"}}>
+                        {(APPROVAL_TYPES?.[approvalState]||APPROVAL_TYPES?.["Karnataka"]||[]).map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Legal Status</div>
+                      <select value={legalStatus} onChange={e=>setLegalStatus(e.target.value)} style={{...IS,width:"100%"}}>
+                        {(LEGAL_STATUSES||[]).map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </div>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Community Type</div>
+                      <select value={communityType} onChange={e=>setCommunityType(e.target.value)} style={{...IS,width:"100%"}}>
+                        {(COMMUNITY_TYPES||[]).map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Construction Quality */}
+                {!isPlot&&(
+                  <div>
+                    <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",
+                      letterSpacing:"0.5px",marginBottom:6,display:"flex",alignItems:"center",gap:5}}>
+                      <span style={{width:3,height:14,background:"#0EA5E9",borderRadius:2,display:"inline-block"}}/>
+                      Construction Quality
+                    </div>
+                    <div style={{display:"flex",gap:8,marginBottom:8}}>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Build Quality</div>
+                        <select value={constructionQuality} onChange={e=>setConstructionQuality(e.target.value)} style={{...IS,width:"100%"}}>
+                          {(CONSTRUCTION_QUALITIES||[]).map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      </div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Ventilation</div>
+                        <select value={ventilation} onChange={e=>setVentilation(e.target.value)} style={{...IS,width:"100%"}}>
+                          {(VENTILATION_OPTIONS||[]).map(o=><option key={o}>{o}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>
+                      Balconies — <strong style={{color:C.dark}}>{noBalconies}</strong>
+                    </div>
+                    <input type="range" min={0} max={6} value={noBalconies} onChange={e=>setNoBalconies(+e.target.value)}
+                      style={{width:"100%",accentColor:C.blue,touchAction:"none"}}/>
+                  </div>
+                )}
+
+                {/* Views & Special Features */}
+                {!isPlot&&(
+                  <div>
+                    <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:6}}>🌅 Views & Special Features</div>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                      {[
+                        ["hasLakeView",setHasLakeView,"🏞️ Lake View","+5-8%"],
+                        ["hasGardenView",setHasGardenView,"🌿 Garden View","+3-5%"],
+                        ["hasParkView",setHasParkView,"🌳 Park View","+2-4%"],
+                        ["hasCityView",setHasCityView,"🏙️ City View","+3-6%"],
+                        ["hasDuplex",setHasDuplex,"🔀 Duplex","+8-12%"],
+                        ["hasServantRoom",setHasServantRoom,"🛎️ Servant Room","+2-4%"],
+                      ].map(([key,setter,label,pct])=>{
+                        const val = {hasLakeView,hasGardenView,hasParkView,hasCityView,hasDuplex,hasServantRoom}[key];
+                        return (
+                          <button key={key} onClick={()=>setter(!val)}
+                            style={{padding:"5px 10px",borderRadius:20,fontSize:10,fontWeight:600,cursor:"pointer",border:"none",
+                              background:val?"#EFF6FF":"#F1F5F9",color:val?C.blue:"#94A3B8",
+                              border:`1.5px solid ${val?C.blue:C.border}`}}>
+                            {label} <span style={{fontSize:9,opacity:0.7}}>{pct}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Maintenance & Costs */}
+                {!isPlot&&(
+                  <div style={{background:"#F8FAFF",borderRadius:9,border:`1px solid ${C.border}`,padding:10}}>
+                    <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:7}}>🔧 Maintenance & Costs</div>
+                    <div style={{display:"flex",background:"#F1F5F9",borderRadius:8,padding:3,gap:3,marginBottom:8}}>
+                      <button onClick={()=>setAutoCalc(true)}
+                        style={{flex:1,padding:"7px 6px",borderRadius:7,border:"none",cursor:"pointer",
+                          fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,textAlign:"center",
+                          background:autoCalc?"#fff":"transparent",color:autoCalc?C.dark:C.muted,
+                          boxShadow:autoCalc?"0 1px 4px rgba(0,0,0,.1)":"none",transition:"all .15s"}}>
+                        ⚡ Auto-estimate
+                      </button>
+                      <button onClick={()=>setAutoCalc(false)}
+                        style={{flex:1,padding:"7px 6px",borderRadius:7,border:"none",cursor:"pointer",
+                          fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,textAlign:"center",
+                          background:!autoCalc?"#fff":"transparent",color:!autoCalc?C.dark:C.muted,
+                          boxShadow:!autoCalc?"0 1px 4px rgba(0,0,0,.1)":"none",transition:"all .15s"}}>
+                        ✏️ Enter manually
+                      </button>
+                    </div>
+                    {autoCalc?(()=>{
+                      const m=autoMaintCalc();
+                      // Shows estimated maintenance based on property details entered above
                       return(
-                        <div key={pt.yr} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
-                          <div style={{fontFamily:"Inter,sans-serif",fontSize:8,fontWeight:700,color:colors[i]}}>₹{pt.r>=10000?Math.round(pt.r/1000)+"k":pt.r.toLocaleString()}</div>
-                          <div style={{width:"100%",background:colors[i],borderRadius:"3px 3px 0 0",height:h+"px",opacity:0.9}}/>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+                          {[["Monthly",`₹${fmtL(m.monthly)}`,C.dark],["Growth",`${m.growth}%/yr`,"#059669"],["Tax/yr",`₹${fmtL(m.tax)}`,C.amber]].map(([l,v,c])=>(
+                            <div key={l} style={{textAlign:"center",background:"#fff",borderRadius:7,padding:"7px 4px",border:`1px solid ${C.border}`}}>
+                              <div style={{fontSize:9,color:C.muted}}>{l}</div>
+                              <div style={{fontSize:11,fontWeight:700,color:c}}>{v}</div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })():(
+                      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                        <div style={{display:"flex",gap:8}}>
+                          <div style={{flex:1}}>
+                            <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:3}}>Charge Amount</div>
+                            <input value={maintenanceCharge} onChange={e=>setMaintenanceCharge(e.target.value)}
+                              type="number" placeholder="e.g. 5000" style={{...IS,width:"100%"}}/>
+                          </div>
+                          <div style={{flex:1}}>
+                            <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:3}}>Type</div>
+                            <select value={maintenanceType} onChange={e=>setMaintenanceType(e.target.value)} style={{...IS,width:"100%"}}>
+                              {["flat monthly charge","per sqft/month","quarterly","annual"].map(o=><option key={o}>{o}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+              </div>
+            )}
+
+            {/* ── STEP 2: AMENITIES ────────────────────────────────────── */}
+            {activeSection==="amenities"&&(
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div style={{display:"flex",background:"#F1F5F9",borderRadius:8,padding:2,gap:2}}>
+                    {[["select","Select Individually"],["count","Just Enter Count"]].map(([val,label])=>(
+                      <button key={val} onClick={()=>setAmenityMode(val)}
+                        style={{padding:"6px 10px",borderRadius:7,border:"none",cursor:"pointer",
+                          fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:700,
+                          background:amenityMode===val?"#2563EB":"transparent",
+                          color:amenityMode===val?"#fff":"#94A3B8"}}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{fontSize:10,fontWeight:600,color:C.muted}}>
+                    Score: <span style={{color:"#F59E0B",fontWeight:700}}>{amenityScore}/100</span>
+                  </div>
+                </div>
+
+                {amenityMode==="count"?(
+                  <div>
+                    <div style={{fontSize:10,color:C.muted,marginBottom:6}}>Total amenity count</div>
+                    <input type="number" value={amenityCount} onChange={e=>setAmenityCount(+e.target.value)}
+                      placeholder="e.g. 20" style={{...IS,width:"100%"}}/>
+                  </div>
+                ):(
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    <div style={{fontSize:10,color:C.muted}}>{selAmenities.length} selected ·
+                      <span onClick={()=>setSelAmenities([])} style={{color:"#EF4444",fontWeight:600,cursor:"pointer",marginLeft:4}}>Clear</span>
+                    </div>
+                    {Object.entries(AMENITY_CATEGORIES||{}).map(([catName,catData])=>{
+                      const catItems = catData.items||[];
+                      const selCount = catItems.filter(a=>selAmenities.includes(a.id)).length;
+                      const catPremium = catItems.filter(a=>selAmenities.includes(a.id)).reduce((s,a)=>s+a.premium*catData.weight,0);
+                      const isOpen = expandedCat===catName;
+                      return (
+                        <div key={catName} style={{border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden"}}>
+                          <div onClick={()=>setExpandedCat(isOpen?null:catName)}
+                            style={{padding:"10px 12px",display:"flex",justifyContent:"space-between",
+                              alignItems:"center",background:"#F8FAFC",cursor:"pointer"}}>
+                            <span style={{fontSize:11,fontWeight:700,color:C.dark}}>{catName}</span>
+                            <span style={{fontSize:10,fontWeight:600,color:selCount>0?"#059669":C.muted}}>
+                              {selCount}/{catItems.length}{selCount>0?` · +₹${fmtL(catPremium)}L`:""} {isOpen?"▲":"▼"}
+                            </span>
+                          </div>
+                          {isOpen&&(
+                            <div style={{padding:"10px 12px",display:"flex",flexWrap:"wrap",gap:6}}>
+                              {catItems.map(item=>{
+                                const on = selAmenities.includes(item.id);
+                                return (
+                                  <button key={item.id}
+                                    onClick={()=>setSelAmenities(p=>on?p.filter(x=>x!==item.id):[...p,item.id])}
+                                    style={{padding:"5px 9px",borderRadius:20,fontSize:10,fontWeight:600,
+                                      cursor:"pointer",border:"none",
+                                      background:on?"#EFF6FF":"#F8FAFC",
+                                      color:on?C.blue:"#94A3B8",
+                                      border:`1.5px solid ${on?C.blue:C.border}`}}>
+                                    {item.label}
+                                    {on&&<span style={{marginLeft:3,fontSize:9}}>+₹{item.premium}</span>}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
                   </div>
-                  <div style={{display:"flex",gap:8,marginBottom:10}}>
-                    {pts.map(pt=><div key={pt.yr} style={{flex:1,textAlign:"center",fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>{pt.yr}</div>)}
+                )}
+              </div>
+            )}
+
+            {/* ── STEP 3: CIVIC ────────────────────────────────────────── */}
+            {activeSection==="civic"&&(
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{fontSize:12,fontWeight:700,color:C.dark}}>🏛️ Civic Conditions</span>
+                  <span style={{background:"#EFF6FF",color:C.blue,fontSize:10,fontWeight:700,
+                    padding:"3px 10px",borderRadius:8}}>
+                    Score {(()=>{const g=civicGood.length,b=civicBad.length;return Math.max(0,Math.min(100,60+g*8-b*7));})()}/100
+                  </span>
+                </div>
+
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <div>
+                    <div style={{fontSize:10,fontWeight:700,color:"#059669",marginBottom:5}}>✅ Positives</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      {[["road_quality","Road Quality"],["garbage_mgmt","Garbage / SWM"],["streetlight","Street Lighting"],
+                        ["no_sewage","No Sewage / Flooding"],["public_parks","Public Parks"],["police","Police Patrolling"]].map(([id,label])=>{
+                        const on = civicGood.includes(id);
+                        return (
+                          <button key={id} onClick={()=>setCivicGood(p=>on?p.filter(x=>x!==id):[...p,id])}
+                            style={{textAlign:"left",padding:"6px 9px",borderRadius:8,cursor:"pointer",border:"none",fontSize:10,fontWeight:600,
+                              background:on?"#F0FDF4":"#F8FAFC",color:on?"#15803D":"#94A3B8",
+                              border:`1.5px solid ${on?"#86EFAC":C.border}`}}>
+                            {on?"✓ ":""}{label}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.green,fontWeight:600,textAlign:"center"}}>
-                    10Y gain: ₹{fmtL(pts[4].t-pts[0].t)} ({Math.round((pts[4].t-pts[0].t)/pts[0].t*100)}%)
+                  <div>
+                    <div style={{fontSize:10,fontWeight:700,color:"#EF4444",marginBottom:5}}>⚠️ Issues</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      {[["noise","Noise Pollution"],["aqi","Air Quality (AQI)"],["stray","Stray Animals"],
+                        ["illegal_const","Illegal Constructions"],["flooding","Waterlogging"],["power_cuts","Power Cuts"]].map(([id,label])=>{
+                        const on = civicBad.includes(id);
+                        return (
+                          <button key={id} onClick={()=>setCivicBad(p=>on?p.filter(x=>x!==id):[...p,id])}
+                            style={{textAlign:"left",padding:"6px 9px",borderRadius:8,cursor:"pointer",border:"none",fontSize:10,fontWeight:600,
+                              background:on?"#FEF2F2":"#F8FAFC",color:on?"#EF4444":"#94A3B8",
+                              border:`1.5px solid ${on?"#FECACA":C.border}`}}>
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
-              );
-            })()}
 
-            {/* Insights */}
-            <div style={{background:"#fff",borderRadius:10,border:`1px solid ${C.border}`,padding:13}}>
-              <div style={{fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,color:C.dark,marginBottom:8}}>📍 Market Insights</div>
-              <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark,lineHeight:1.7,marginBottom:6}}>{result.locality_insight}</div>
-              {[
-                result.water_impact&&["💧",result.water_impact],
-                result.floor_impact&&["🏢",result.floor_impact],
-                result.developer_tier_impact&&["🏗️",result.developer_tier_impact],
-                result.approval_impact&&["📋",result.approval_impact],
-                result.view_premium_note&&["🏞️",result.view_premium_note],
-                result.sunlight_assessment&&["☀️",result.sunlight_assessment],
-              ].filter(Boolean).map(([icon,txt],i)=>(
-                <div key={i} style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,marginTop:4}}>{icon} {txt}</div>
-              ))}
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4}}>
+                  <span style={{fontSize:11,fontWeight:700,color:C.dark}}>🏙️ Nearby Facilities</span>
+                  <span style={{fontSize:10,fontWeight:700,color:"#059669"}}>
+                    +₹{infraPremium.toLocaleString()}/sqft
+                  </span>
+                </div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                  {(INFRA_ITEMS||[]).map(item=>{
+                    const on = selInfra.includes(item.id);
+                    return (
+                      <button key={item.id} onClick={()=>setSelInfra(p=>on?p.filter(x=>x!==item.id):[...p,item.id])}
+                        style={{padding:"5px 9px",borderRadius:20,fontSize:10,fontWeight:600,cursor:"pointer",border:"none",
+                          background:on?"#EFF6FF":"#F8FAFC",color:on?C.blue:"#94A3B8",
+                          border:`1.5px solid ${on?C.blue:C.border}`}}>
+                        {item.icon} {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ── STEP 4: PRICING ──────────────────────────────────────── */}
+            {activeSection==="pricing"&&(
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                <div style={{background:"#F8FAFF",borderRadius:9,border:`1px solid ${C.border}`,padding:10}}>
+                  <div style={{fontSize:11,fontWeight:700,color:C.dark,marginBottom:4}}>Formula Estimate</div>
+                  <div style={{fontSize:18,fontWeight:700,color:C.blue}}>
+                    {locality.trim()?`₹${(calcEstimate().rate||0).toLocaleString()}/sqft`:"Enter locality to see estimate"}
+                  </div>
+                  {locality.trim()&&(
+                    <div style={{fontSize:11,color:C.muted,marginTop:2}}>
+                      {fmt(calcEstimate().low)} – {fmtCr(calcEstimate().high)}
+                    </div>
+                  )}
+                  <div style={{fontSize:9,color:C.blue,marginTop:4,cursor:"pointer",fontWeight:600}}>
+                    📋 Curated reference data
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{fontSize:11,fontWeight:700,color:C.dark,marginBottom:4}}>📊 Your Known Market Range <span style={{fontSize:9,fontWeight:400,color:C.muted}}>(optional)</span></div>
+                  <div style={{fontSize:10,color:C.muted,marginBottom:6}}>If you know local rates, enter them. AI will blend with market data.</div>
+                  <div style={{display:"flex",gap:8}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Min ₹/sqft</div>
+                      <input value={userMinPrice} onChange={e=>setUserMinPrice(e.target.value)}
+                        placeholder="e.g. 5500" style={{...IS,width:"100%"}}/>
+                    </div>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Max ₹/sqft</div>
+                      <input value={userMaxPrice} onChange={e=>setUserMaxPrice(e.target.value)}
+                        placeholder="e.g. 8500" style={{...IS,width:"100%"}}/>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{fontSize:10,fontWeight:700,color:C.dark,marginBottom:6}}>Asking Price (optional)</div>
+                <input value={askingPrice} onChange={e=>setAskingPrice(e.target.value)}
+                  placeholder="e.g. 1,20,00,000" style={{...IS,width:"100%"}}/>
+              </div>
+            )}
+
+            {/* ── STEP 5: UDS & LOAN ───────────────────────────────────── */}
+            {activeSection==="uds"&&(
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                <div style={{background:"#F8FAFF",borderRadius:8,padding:"8px 10px",
+                  fontSize:10,color:"#374151",lineHeight:1.6,border:`1px solid ${C.border}`}}>
+                  🌍 UDS = your % land ownership. Even in an apartment you co-own a fraction of the land — this shows its future value vs total holding costs.
+                </div>
+
+                {/* Land & UDS */}
+                <div>
+                  <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",
+                    letterSpacing:"0.5px",marginBottom:6,display:"flex",alignItems:"center",gap:5}}>
+                    <span style={{width:3,height:14,background:"#059669",borderRadius:2,display:"inline-block"}}/>
+                    Land & UDS
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Your UDS (%)</div>
+                      <input value={udsPercent} onChange={e=>setUdsPercent(e.target.value)}
+                        placeholder="e.g. 0.85" style={{...IS,width:"100%"}}/>
+                    </div>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Total Land Area (sqft)</div>
+                      <input value={totalLandArea} onChange={e=>setTotalLandArea(e.target.value)}
+                        placeholder="e.g. 43560" style={{...IS,width:"100%"}}/>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Loan Details */}
+                <div>
+                  <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",
+                    letterSpacing:"0.5px",marginBottom:6,display:"flex",alignItems:"center",gap:5}}>
+                    <span style={{width:3,height:14,background:C.blue,borderRadius:2,display:"inline-block"}}/>
+                    Loan Details
+                  </div>
+                  <div style={{display:"flex",gap:8,marginBottom:8}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Loan Amount (₹)</div>
+                      <input value={loanAmount} onChange={e=>setLoanAmount(e.target.value)}
+                        placeholder="e.g. 60,00,000" style={{...IS,width:"100%"}}/>
+                    </div>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Down Payment (₹)</div>
+                      <input value={downPayment} onChange={e=>setDownPayment(e.target.value)}
+                        placeholder="e.g. 15,00,000" style={{...IS,width:"100%"}}/>
+                    </div>
+                  </div>
+                  <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>
+                    Interest Rate — <strong style={{color:C.dark}}>{loanInterestRate}%</strong>
+                  </div>
+                  <input type="range" min={6} max={14} step={0.25} value={loanInterestRate}
+                    onChange={e=>setLoanInterestRate(+e.target.value)}
+                    style={{width:"100%",accentColor:C.blue,touchAction:"none"}}/>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:C.muted,marginBottom:8}}>
+                    <span>6%</span><span>14%</span>
+                  </div>
+                  <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>
+                    Tenure — <strong style={{color:C.dark}}>{loanTenureYears} yrs</strong>
+                  </div>
+                  <input type="range" min={5} max={30} step={1} value={loanTenureYears}
+                    onChange={e=>setLoanTenureYears(+e.target.value)}
+                    style={{width:"100%",accentColor:C.blue,touchAction:"none"}}/>
+                </div>
+
+                {/* Annual Holding Costs */}
+                <div>
+                  <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",
+                    letterSpacing:"0.5px",marginBottom:6,display:"flex",alignItems:"center",gap:5}}>
+                    <span style={{width:3,height:14,background:"#F59E0B",borderRadius:2,display:"inline-block"}}/>
+                    Annual Holding Costs
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                    <div>
+                      <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Maintenance (₹/yr)
+                        {maintenanceCharge&&!annualMaintenance&&<span style={{color:C.blue,fontSize:9,marginLeft:4}}>auto-filled</span>}
+                      </div>
+                      <input value={annualMaintenance} onChange={e=>setAnnualMaintenance(e.target.value)}
+                        type="number" style={{...IS,width:"100%"}}
+                        placeholder={maintenanceCharge
+                          ? `₹${Math.round(parseFloat(maintenanceCharge)*(maintenanceType==="per sqft/month"?(+area||1200)*12:maintenanceType==="quarterly"?4:maintenanceType==="annual"?1:12)).toLocaleString()}`
+                          : "e.g. 42,000"}/>
+                    </div>
+                    <div>
+                      <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Repairs (₹/yr)</div>
+                      <input value={annualRepairs} onChange={e=>setAnnualRepairs(e.target.value)}
+                        type="number" placeholder="e.g. 15,000" style={{...IS,width:"100%"}}/>
+                    </div>
+                    <div>
+                      <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>Property Tax (₹/yr)</div>
+                      <input value={propertyTaxAnnual} onChange={e=>setPropertyTaxAnnual(e.target.value)}
+                        type="number" placeholder="e.g. 8,000" style={{...IS,width:"100%"}}/>
+                    </div>
+                    <div>
+                      <div style={{fontSize:10,fontWeight:600,color:C.muted,marginBottom:4}}>
+                        Land Appreciation — <strong style={{color:C.dark}}>{landAppreciationRate}%/yr</strong>
+                      </div>
+                      <input type="range" min={0} max={20} step={0.5} value={landAppreciationRate}
+                        onChange={e=>setLandAppreciationRate(+e.target.value)}
+                        style={{width:"100%",accentColor:"#8B5CF6",touchAction:"none",marginTop:8}}/>
+                    </div>
+                  </div>
+                  {(!udsPercent||!totalLandArea||!loanAmount)&&(
+                    <div style={{fontSize:10,color:C.muted,textAlign:"center",fontStyle:"italic"}}>
+                      Fill UDS %, total land area, and loan amount above to see calculations.
+                    </div>
+                  )}
+                  {udsPercent&&totalLandArea&&loanAmount&&(()=>{
+                    const udsArea = (+totalLandArea||0)*(+udsPercent||0)/100;
+                    const landVal = udsArea * BASE_RATE * (landAppreciationRate/10);
+                    const effectiveAnnualMaint = parseFloat(annualMaintenance) > 0
+                      ? parseFloat(annualMaintenance)
+                      : maintenanceCharge
+                        ? (maintenanceType==="per sqft/month" ? parseFloat(maintenanceCharge)*(+area||1200)*12
+                          : maintenanceType==="quarterly"    ? parseFloat(maintenanceCharge)*4
+                          : maintenanceType==="annual"       ? parseFloat(maintenanceCharge)
+                          : parseFloat(maintenanceCharge)*12)
+                        : autoMaintCalc().annual;
+                    const maintTotal=effectiveAnnualMaint*loanTenureYears;
+                    const taxTotal=(parseFloat(propertyTaxAnnual)||0)*loanTenureYears;
+                    const repairTotal=(parseFloat(annualRepairs)||0)*loanTenureYears;
+                    const L=parseFloat(loanAmount.replace(/,/g,""))||0;
+                    const r=(loanInterestRate/100)/12;
+                    const n=loanTenureYears*12;
+                    const emi=r?Math.round(L*(r*Math.pow(1+r,n))/(Math.pow(1+r,n)-1)):Math.round(L/n);
+                    const totalInterest=emi*n-L;
+                    const netPos=landVal-(maintTotal+taxTotal+repairTotal+totalInterest);
+                    return (
+                      <div style={{background:"linear-gradient(135deg,#0F1B2D,#1E3A5F)",borderRadius:10,padding:"12px 14px",marginTop:6}}>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                          {[
+                            ["UDS Land Area",`${Math.round(udsArea)} sqft`,"#F8FAFB"],
+                            ["Land Value (est.)",fmtCr(landVal),"#34D399"],
+                            ["EMI",`₹${emi.toLocaleString()}/mo`,"#60A5FA"],
+                            ["Total Interest",fmtCr(totalInterest),"#FCD34D"],
+                            ["Total Holding Cost",fmtCr(maintTotal+taxTotal+repairTotal+totalInterest),"#F97316"],
+                            ["Net Position",fmtCr(netPos),netPos>0?"#34D399":"#EF4444"],
+                          ].map(([l,v,c])=>(
+                            <div key={l}>
+                              <div style={{color:"#94A3B8",fontSize:9,marginBottom:2}}>{l}</div>
+                              <div style={{color:c,fontSize:13,fontWeight:700}}>{v}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+
+            {/* ── Navigation buttons ──────────────────────────────────── */}
+            <div style={{display:"flex",gap:8,marginTop:4}}>
+              {sIdx > 0 && (
+                <button onClick={goPrev}
+                  style={{flex:1,padding:"10px",border:`1.5px solid ${C.border}`,borderRadius:9,
+                    background:"#fff",fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,
+                    color:C.muted,cursor:"pointer"}}>
+                  ← {SECTION_CONFIG[sIdx-1].label}
+                </button>
+              )}
+              {sIdx < SECTION_CONFIG.length-1 ? (
+                <button onClick={goNext}
+                  style={{flex:2,padding:"10px",border:"none",borderRadius:9,background:C.blue,
+                    fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:700,color:"#fff",cursor:"pointer"}}>
+                  Next: {SECTION_CONFIG[sIdx+1].icon} {SECTION_CONFIG[sIdx+1].label} →
+                </button>
+              ) : (
+                <button onClick={analyze} disabled={loading||!locality.trim()}
+                  style={{flex:2,padding:"10px",border:"none",borderRadius:9,
+                    background:loading||!locality.trim()?"#94A3B8":C.navy,
+                    fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:700,color:"#fff",
+                    cursor:loading||!locality.trim()?"not-allowed":"pointer"}}>
+                  {loading?"Analyzing…":"🔍 Analyze Price Accuracy →"}
+                </button>
+              )}
             </div>
 
-            {/* Score breakdown */}
-            <div style={{background:"#fff",borderRadius:10,border:`1px solid ${C.border}`,padding:13}}>
-              <div style={{fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,color:C.dark,marginBottom:10}}>Score Breakdown</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                {[{l:"Amenity Score",v:amenityScore,note:result.amenity_score_impact},{l:"Civic Score",v:civicScore,note:result.civic_impact}].map(s=>(
-                  <div key={s.l} style={{background:C.bg,borderRadius:8,padding:10}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                      <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,color:C.dark}}>{s.l}</div>
-                      <div style={{background:scoreColor(s.v),color:"#fff",borderRadius:5,padding:"1px 8px",fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:11}}>{s.v}</div>
+          </div>
+        );
+      })()}
+
+      {/* ── LIVE ESTIMATE BAR ────────────────────────────────────────────────── */}
+      <PricerEstimateBar calcEstimate={calcEstimate} calcGST={calcGST} city={canonicalCity}/>
+
+      {/* ── ANALYZE BUTTON ───────────────────────────────────────────────────── */}
+      <div style={{margin:"0 12px"}}>
+        <button onClick={analyze} disabled={loading||(!locality.trim()&&!city)}
+          style={{width:"100%",padding:13,background:loading||(!locality.trim()&&!city)?"#94A3B8":C.navy,
+            color:"#fff",border:"none",borderRadius:10,fontFamily:"Inter,sans-serif",
+            fontSize:13,fontWeight:700,cursor:loading||(!locality.trim()&&!city)?"not-allowed":"pointer",
+            transition:"background .2s"}}>
+          {loading?"⏳ Analyzing…":"Analyze Price Accuracy →"}
+        </button>
+      </div>
+
+      {/* ── ERROR ────────────────────────────────────────────────────────────── */}
+      {error&&(
+        <div style={{margin:"0 12px",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:10,
+          padding:"10px 12px",fontFamily:"Inter,sans-serif",fontSize:11,color:"#EF4444"}}>
+          ⚠️ {error}
+        </div>
+      )}
+
+      {/* ── RESULT CARD ──────────────────────────────────────────────────────── */}
+      {result&&(()=>{
+        const vc=verdictColor(result.accuracy_verdict);
+        const aiRate=result.market_rate_sqft||result.our_estimate?.rate;
+        const ourRate=result.our_estimate?.rate||aiRate;
+        const gst=calcGST(result.total_value||0);
+        return(
+          <div style={{margin:"0 12px",display:"flex",flexDirection:"column",gap:10}}>
+
+            {/* Result hero */}
+            <div style={{background:"linear-gradient(135deg,#0F1B2D,#1E3A5F)",borderRadius:14,padding:16}}>
+              <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:9,letterSpacing:1.5,textTransform:"uppercase",marginBottom:4}}>
+                {canonicalLocality||locality} · {propType.split("/")[0].trim()} · {isPlot?`${plotArea} sqft`:`${area} sqft`}
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                <div>
+                  <div style={{color:"#F8FAFB",fontFamily:"Georgia,serif",fontSize:24,fontWeight:700,lineHeight:1}}>
+                    ₹{(aiRate||0).toLocaleString()}/sqft
+                  </div>
+                  <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:11,marginTop:3}}>
+                    {fmtCr(result.low_estimate||0)} – {fmtCr(result.high_estimate||0)}
+                  </div>
+                  {result._premium&&(
+                    <div style={{color:"#FCD34D",fontFamily:"Inter,sans-serif",fontSize:10,marginTop:2}}>
+                      +₹{(result._premium/1000).toFixed(1)}k/sqft area premium applied
                     </div>
-                    <div style={{background:C.border,borderRadius:99,height:5}}><div style={{background:scoreColor(s.v),height:"100%",width:`${s.v}%`,borderRadius:99}}/></div>
-                    {s.note&&<div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,marginTop:5,lineHeight:1.4}}>{s.note}</div>}
+                  )}
+                  {result.price_trend&&(
+                    <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:10,marginTop:3}}>
+                      {result.price_trend==="Rising"?"📈":"📉"} {result.price_trend} · {result.yoy_appreciation_pct}% YoY
+                    </div>
+                  )}
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{background:vc==="green"?"#F0FDF4":vc==="red"?"#FEF2F2":"#FFFBEB",
+                    color:vc==="green"?"#15803D":vc==="red"?"#EF4444":"#92400E",
+                    fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:700,
+                    padding:"5px 12px",borderRadius:8,marginBottom:4}}>
+                    {result.accuracy_verdict||"Analyzed"}
+                  </div>
+                  {gst.amount>0&&(
+                    <div style={{color:"#FCD34D",fontFamily:"Inter,sans-serif",fontSize:10}}>
+                      +GST {gst.rate}%
+                    </div>
+                  )}
+                </div>
+              </div>
+              {/* 3-col metric strip */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+                {[
+                  ["Formula",`₹${(ourRate||0).toLocaleString()}/sqft`,"#94A3B8"],
+                  ["AI Market",`₹${(aiRate||0).toLocaleString()}/sqft`,"#34D399"],
+                  ["Total Value",fmtCr(result.total_value||0),"#F8FAFB"],
+                ].map(([l,v,c])=>(
+                  <div key={l} style={{background:"rgba(255,255,255,0.07)",borderRadius:8,padding:8,textAlign:"center"}}>
+                    <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:9,marginBottom:2}}>{l}</div>
+                    <div style={{color:c,fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700}}>{v}</div>
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* Elder / kid friendliness */}
-            {(result.elder_friendliness||result.kid_friendliness)&&(
+            {/* Insight */}
+            {result.locality_insight&&(
+              <div style={{background:"#fff",borderRadius:12,padding:12,border:`1px solid ${C.border}`}}>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,color:C.dark,marginBottom:6}}>📍 Locality Insight</div>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#475569",lineHeight:1.7}}>{result.locality_insight}</div>
+              </div>
+            )}
+
+            {/* Investment + Rental row */}
+            {(result.investment_recommendation||result.rental_yield_pct)&&(
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                {[["👴 Elder Friendly",result.elder_friendliness],["👶 Kid Friendly",result.kid_friendliness]].filter(([,v])=>v).map(([label,val])=>{
-                  const part=val?.split(" - "); const rating=part?.[0]; const reason=part?.[1];
-                  const col=rating==="Good"?C.green:rating==="Average"?C.amber:C.red;
-                  return(
-                    <div key={label} style={{background:"#fff",borderRadius:9,border:`1px solid ${C.border}`,padding:11}}>
-                      <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,color:C.dark,marginBottom:4}}>{label}</div>
-                      <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:14,color:col,marginBottom:3}}>{rating}</div>
-                      {reason&&<div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:C.muted,lineHeight:1.4}}>{reason}</div>}
-                    </div>
-                  );
-                })}
+                {result.investment_recommendation&&(
+                  <div style={{background:"#F0FDF4",borderRadius:10,padding:10,border:"1px solid #86EFAC"}}>
+                    <div style={{fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:700,color:"#15803D",marginBottom:3}}>💰 Investment</div>
+                    <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:700,color:"#059669"}}>{result.investment_recommendation}</div>
+                    {result.resale_potential&&<div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#64748B",marginTop:2}}>{result.resale_potential}</div>}
+                  </div>
+                )}
+                {result.rental_yield_pct&&(
+                  <div style={{background:"#EFF6FF",borderRadius:10,padding:10,border:"1px solid #BFDBFE"}}>
+                    <div style={{fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:700,color:"#1D4ED8",marginBottom:3}}>🏠 Rental Yield</div>
+                    <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:700,color:C.blue}}>{result.rental_yield_pct}% p.a.</div>
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Under Construction investor view */}
-            {result.isUC&&result.completion_price_estimate&&(
-              <div style={{background:"#FFFBEB",borderRadius:10,border:"1px solid #FDE68A",padding:14}}>
-                <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:12,color:"#92400E",marginBottom:10}}>📈 Investment Analysis — Under Construction</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:8,marginBottom:8}}>
-                  {[["Book Now At",`₹${aiRate?.toLocaleString()}/sqft`,"#FEF9C3"],["Est. At Possession",`₹${result.completion_price_estimate.toLocaleString()}/sqft`,"#F0FDF4"],["Expected Gain",`+${result.completion_appreciation_pct}%`,"#EFF6FF"]].map(([l,v,bg])=>(
-                    <div key={l} style={{textAlign:"center",background:bg,borderRadius:8,padding:"10px 6px"}}>
-                      <div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#92400E"}}>{l}</div>
-                      <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:13,color:C.dark}}>{v}</div>
-                    </div>
-                  ))}
-                </div>
-                {result.gst_note&&<div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#92400E",marginBottom:4}}>🧾 {result.gst_note}</div>}
-                {result.investment_recommendation&&<div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark}}>{result.investment_recommendation}</div>}
-              </div>
-            )}
-
-            {/* Comparables */}
-            {result.comparable_projects?.length>0&&(
-              <div style={{background:"#fff",borderRadius:10,border:"1px solid "+C.border,padding:12}}>
-                <div style={{fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,color:C.dark,marginBottom:8}}>🏢 Comparable Projects</div>
-                {result.comparable_projects.map((p,i)=>{
-                  const isObj=p&&typeof p==="object";
-                  const name=isObj?p.name:p; const rate=isObj?p.rate_sqft:null; const link=isObj?p.maps_link:null; const dist=isObj?p.distance:null;
-                  return(
-                    <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
-                      padding:"8px 0",borderBottom:i<result.comparable_projects.length-1?"1px solid "+C.border:"none"}}>
-                      <div>
-                        <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark,fontWeight:500}}>{name}</div>
-                        {(rate||dist)&&<div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.muted,marginTop:1}}>{rate}{dist&&` · ${dist}`}</div>}
-                      </div>
-                      {link&&<a href={link} target="_blank" rel="noopener noreferrer"
-                        style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.blue,fontWeight:600,textDecoration:"none",marginLeft:10}}>📍 Map</a>}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Red flags, resale, yield, negotiation */}
-            {result.red_flags?.length>0&&(
-              <div style={{background:"#FFF7F5",borderRadius:10,border:"1px solid #FED7CC",padding:12}}>
-                <div style={{fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,color:C.red,marginBottom:6}}>🚩 Watch Out For</div>
-                {result.red_flags.map((f,i)=><div key={i} style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark,padding:"2px 0"}}>• {f}</div>)}
-              </div>
-            )}
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-              <div style={{background:"#F0FDF4",borderRadius:9,border:"1px solid #86EFAC",padding:11}}>
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:600,color:C.green,marginBottom:2}}>Resale Potential</div>
-                <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:15,color:C.green}}>{result.resale_potential}</div>
-              </div>
-              <div style={{background:C.lightBlue,borderRadius:9,border:"1px solid #BFDBFE",padding:11}}>
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:600,color:C.blue,marginBottom:2}}>Rental Yield</div>
-                <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:15,color:C.blue}}>{result.rental_yield_pct}% p.a.</div>
-              </div>
-            </div>
+            {/* Negotiation tip */}
             {result.negotiation_tip&&(
-              <div style={{background:"#FFFBEB",borderRadius:9,border:"1px solid #FDE68A",padding:11}}>
-                <div style={{fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:11,color:"#92400E",marginBottom:2}}>💡 Negotiation Tip</div>
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark}}>{result.negotiation_tip}</div>
+              <div style={{background:"#FFFBEB",borderRadius:10,padding:10,border:"1px solid #FDE68A"}}>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:700,color:"#92400E",marginBottom:4}}>💡 Negotiation Tip</div>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.dark,lineHeight:1.6}}>{result.negotiation_tip}</div>
+              </div>
+            )}
+
+            {/* Red flags */}
+            {result.red_flags?.length>0&&(
+              <div style={{background:"#FEF2F2",borderRadius:10,padding:10,border:"1px solid #FECACA"}}>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:10,fontWeight:700,color:"#EF4444",marginBottom:6}}>🚩 Red Flags</div>
+                {result.red_flags.map((f,i)=>(
+                  <div key={i} style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#475569",marginBottom:3}}>• {f}</div>
+                ))}
+              </div>
+            )}
+
+            {/* Comparable projects */}
+            {result.comparable_projects?.length>0&&(
+              <div style={{background:"#fff",borderRadius:12,padding:12,border:`1px solid ${C.border}`}}>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,color:C.dark,marginBottom:8}}>🏢 Comparable Projects</div>
+                {result.comparable_projects.map((p,i)=>(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                    padding:"6px 0",borderBottom:i<result.comparable_projects.length-1?`1px solid ${C.border}`:"none"}}>
+                    <div>
+                      <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:600,color:C.dark}}>{p.name}</div>
+                      {p.maps_link&&<a href={p.maps_link} target="_blank" rel="noreferrer"
+                        style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.blue}}>View on Maps →</a>}
+                    </div>
+                    <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,color:C.blue}}>{p.rate_sqft}</div>
+                  </div>
+                ))}
               </div>
             )}
 
             {/* Price feedback */}
-            {showFeedback&&!feedback&&(
-              <div style={{background:"#fff",borderRadius:10,border:`1px solid ${C.border}`,padding:14}}>
-                <div style={{fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,color:C.dark,marginBottom:6}}>🎯 Is this price accurate for your area?</div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-                  <div><label style={LS}>Min ₹/sqft you've seen</label><input value={userMinPrice} onChange={e=>setUserMinPrice(e.target.value)} type="number" style={IS}/></div>
-                  <div><label style={LS}>Max ₹/sqft you've seen</label><input value={userMaxPrice} onChange={e=>setUserMaxPrice(e.target.value)} type="number" style={IS}/></div>
+            {showFeedback&&(
+              <div style={{background:"#F0FDF4",borderRadius:10,padding:10,border:"1px solid #86EFAC"}}>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,color:"#059669",marginBottom:6}}>
+                  📊 Is this price accurate? Help us learn.
                 </div>
-                <div style={{display:"flex",gap:8}}>
-                  <button onClick={()=>{setFeedback({type:"agree",msg:"Thanks! Marked as accurate."});setShowFeedback(false);}}
-                    style={{flex:1,background:"#F0FDF4",border:"1px solid #86EFAC",color:C.green,borderRadius:8,padding:"8px",fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,cursor:"pointer"}}>✓ Accurate</button>
-                  <button onClick={submitCorrection} disabled={!userMinPrice||!userMaxPrice}
-                    style={{flex:2,background:userMinPrice&&userMaxPrice?C.blue:C.muted,color:"#fff",border:"none",borderRadius:8,padding:"8px",fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:12,cursor:userMinPrice&&userMaxPrice?"pointer":"default"}}>Save Range → AI will learn & adjust</button>
+                <div style={{display:"flex",gap:8,marginBottom:6}}>
+                  <div style={{flex:1}}>
+                    <div style={LS}>Your Min ₹/sqft</div>
+                    <input value={userMinPrice} onChange={e=>setUserMinPrice(e.target.value)} type="number" style={IS} placeholder="5500"/>
+                  </div>
+                  <div style={{flex:1}}>
+                    <div style={LS}>Your Max ₹/sqft</div>
+                    <input value={userMaxPrice} onChange={e=>setUserMaxPrice(e.target.value)} type="number" style={IS} placeholder="8500"/>
+                  </div>
                 </div>
+                <button onClick={submitCorrection}
+                  style={{width:"100%",padding:9,background:"#059669",color:"#fff",border:"none",
+                    borderRadius:8,fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                  Submit Correction
+                </button>
+                {feedback&&<div style={{fontFamily:"Inter,sans-serif",fontSize:10,color:"#059669",marginTop:6,fontWeight:600}}>
+                  ✓ {feedback.msg}
+                </div>}
               </div>
             )}
-            {feedback&&<div style={{background:"#F0FDF4",borderRadius:9,border:"1px solid #86EFAC",padding:"11px 13px",fontFamily:"Inter,sans-serif",fontSize:12,color:C.green}}>✓ {feedback.msg}</div>}
+
+            {/* Disclaimer */}
+            <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted,textAlign:"center",padding:"4px 0"}}>
+              AI-generated analysis · Not financial advice · Verify before investing · nammajaga.com
+            </div>
           </div>
         );
       })()}
+
     </div>
   );
 }
+
 
 function AppInner(){
   const [tab,setTab]=useState("home");
