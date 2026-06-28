@@ -2955,36 +2955,27 @@ function AnalyzeTab({initialQuery="",onClear}){
 
     try{
       // ── Phase 1: Core intelligence — scores, pricing, thesis, drivers ─────
+      // ── Phase 1: Scores + Price + Coords (Sonnet, fast — just numbers) ─────
       const p1=await call(1,
-        `You are analyzing "${aiLoc}, India" for a serious land/property investor.
-Follow ALL scoring anchors, pricing anchors, and field definitions from your system instructions exactly.
-Return a raw JSON object with these fields. Be DETAILED and SPECIFIC — investors make real decisions from this:
+        `Analyze "${aiLoc}", India for property investment. Return ONLY compact raw JSON.
 
+Required fields:
 location_name, state, district,
-lat (4+ decimal places), lng (4+ decimal places),
-current_land_price (exact ₹min–max/sqft from anchor table),
+lat (6 decimal places), lng (6 decimal places),
+current_land_price (₹min–max/sqft per anchor table),
 growth_score (int), risk_score (int),
 infrastructure_score (int), population_score (int), economic_score (int),
 connectivity_score (int), urban_expansion_score (int),
 market_momentum_score (int), scarcity_score (int), catalyst_score (int),
-forecast_2yr (string, specific range), forecast_5yr (string), forecast_10yr (string),
-expected_cagr (string e.g. "12–18%"), confidence_level, growth_zone,
+forecast_2yr, forecast_5yr, forecast_10yr, expected_cagr,
+confidence_level, growth_zone,
 recommendation ("Buy Now"|"Accumulate"|"Watchlist"|"Hold"|"Avoid"),
-
-investment_thesis: MINIMUM 4-5 sentences. Cover: (1) what makes this location unique, (2) who the buyer is, (3) what the specific risk is, (4) what the upside catalyst is, (5) the holding period advice,
-
-growth_drivers: array of 5 strings, each 1-2 sentences with SPECIFIC facts (name the actual roads, companies, projects),
-major_risks: array of 4 strings, each specific and named (not generic),
-locality_insight: 3-4 sentences explaining your scoring decisions with specific facts,
-sentiment_score (int 1-100), sentiment_summary (string),
+sentiment_score (int), sentiment_summary (1 sentence),
 similar_to (string), similarity_score (string)`,
-        2500
+        800
       );
-      // p1 errors throw inside call() — this should never be null if call() succeeded
-      // Inject Places Autocomplete coords if AI returns imprecise ones
+      // p1 errors throw inside call() with descriptive message
       if(placeData?.lat && placeData?.lng) {
-        const aiLat = parseFloat(String(p1.lat||0));
-        const aiLng = parseFloat(String(p1.lng||0));
         const hasGoodCoords = String(p1.lat||'').replace(/[^0-9]/g,'').length >= 6;
         if(!hasGoodCoords) { p1.lat = placeData.lat; p1.lng = placeData.lng; }
       }
@@ -2992,88 +2983,78 @@ similar_to (string), similarity_score (string)`,
       if(p1.lat&&p1.lng) setPins([{...p1,location:p1.location_name}]);
       setStreamChars(1);
 
-      // ── Phases 2+3+4: Parallel on Haiku (4-5x faster, 3x cheaper) ────────
-      // p1 (Sonnet) is already shown. Now fire p2/p3/p4 simultaneously.
+      // ── Phases 2-5: ALL parallel on Haiku ────────────────────────────────
       const HAIKU = "claude-haiku-4-5-20251001";
 
-      const [p2, p3, p4] = await Promise.all([
+      const [p2, p3, p4, p5] = await Promise.all([
 
-        // Phase 2 — Market signals, civic projects, comparables
-        call(2, `Analyze "${aiLoc}, India" for a property investor.
-Return ONLY compact raw JSON (no explanation, no markdown):
+        // Phase 2 — Investment thesis + drivers + risks + insight (text-heavy)
+        call(2, `For "${aiLoc}", India — return ONLY compact raw JSON:
+
+investment_thesis: 3-4 sentences covering (1) what makes this location unique,
+  (2) who the ideal buyer is, (3) key risk, (4) upside catalyst and holding period.
+growth_drivers: array of 5 strings, each 1-2 sentences with specific named facts
+  (actual roads, companies, IT parks, metro lines, government projects).
+major_risks: array of 4 specific named risks (not generic).
+locality_insight: 2-3 sentences explaining the scoring with specific facts.
+trajectory_profile: {
+  current_stage: "Early Discovery|Rising|Established|Maturing|Saturated",
+  historical_mirror: specific locality + year comparison with price,
+  future_trajectory: 1 sentence on what this place becomes in 10 years,
+  price_when_mirror_was_here, price_of_mirror_today, growth_multiple_achieved,
+  investor_window: "Early-Stage Opportunity|Active Appreciation Window|Late-Stage Entry|Post-Peak"
+}`,
+        1200, HAIKU),
+
+        // Phase 3 — Market signals, civic projects, comparables
+        call(3, `For "${aiLoc}", India — return ONLY compact raw JSON:
 
 news_signals: array of 4 objects {
   headline (specific named headline),
   type (BULLISH|BEARISH|CATALYST|NEUTRAL),
   impact (2 sentences on effect for this locality),
-  price_impact (e.g. "+5% to +8% over 18 months"),
+  price_impact (e.g. "+5% over 18 months"),
   is_upcoming_civic (boolean)
 }
 upcoming_civic_projects: array of 4 objects {
-  project (specific named project),
-  status (e.g. "Under construction", "DPR approved"),
-  expected_completion, score_impact (e.g. "+6"), price_impact
+  project, status, expected_completion, score_impact, price_impact
 }
-comparable_projects: array of 3 objects {name, rate_sqft, maps_link}`,
+comparable_projects: array of 3 objects {name, rate_sqft, maps_link}
+ripple_signal: {overflow_from, distance_from_hub, price_gap, absorption_timeline, catalysts_needed}
+economic_absorption: {plan_vs_reality_gap, current_jobs_created, private_sector_confidence,
+  livability_today, absorption_risk,
+  verdict: "Speculative play|Emerging fundamentals|Strong absorption|Oversupplied"}`,
         2000, HAIKU),
 
-        // Phase 3 — Traffic, water, civic grievances
-        call(3, `Analyze "${aiLoc}", India. Return ONLY compact raw JSON:
+        // Phase 4 — Traffic, water, civic grievances
+        call(4, `For "${aiLoc}", India — return ONLY compact raw JSON:
 
 traffic_intelligence: {
   peak_hour_congestion: "Severe|High|Moderate|Low",
-  peak_hours: "e.g. 8-10am and 6-9pm",
-  main_bottlenecks: [3 specific named junctions/roads with issue],
-  crowd_density: "Very High|High|Moderate|Low",
-  population_density_sqkm: integer,
+  peak_hours, main_bottlenecks (3 named junctions/roads with issue),
+  crowd_density, population_density_sqkm (int),
   infrastructure_vs_population: "Adequate|Strained|Overwhelmed",
   metro_bus_connectivity: "Excellent|Good|Average|Poor",
   parking_situation: "Easy|Moderate|Difficult|Very Difficult",
-  weekend_vs_weekday: one sentence,
-  future_relief: one sentence on planned road/metro relief,
-  investor_impact: one sentence on property value impact
+  weekend_vs_weekday (1 sentence), future_relief (1 sentence), investor_impact (1 sentence)
 }
-water_quality_note: 2-3 sentences — source, TDS, seasonal issues.
+water_quality_note: 2-3 sentences on source, TDS, seasonal issues.
 civic_grievances: array of 4 specific strings naming actual streets/locations.`,
-        2000, HAIKU),
+        1500, HAIKU),
 
-        // Phase 4 — Price history, ripple, absorption, trajectory
-        call(4, `Analyze "${aiLoc}", India. Return ONLY compact raw JSON:
+        // Phase 5 — Price history
+        call(5, `For "${aiLoc}", India — return ONLY compact raw JSON:
 
 price_history: array of 9 objects {year: int, price_sqft: int} from 2015-2025.
-  Use realistic non-round numbers. Reflect COVID dip 2020-21.
-
-ripple_signal: {
-  overflow_from: "hub name and avg price",
-  distance_from_hub: "X km",
-  price_gap: "e.g. 2.8x cheaper",
-  absorption_timeline: "e.g. 6-9 years",
-  catalysts_needed: "2-3 specific things"
-}
-economic_absorption: {
-  plan_vs_reality_gap: "High|Medium|Low",
-  current_jobs_created: specific number,
-  private_sector_confidence: "High|Medium|Low|Absent",
-  livability_today: 2 sentences,
-  absorption_risk: 1 sentence,
-  verdict: "Speculative play|Emerging fundamentals|Strong absorption|Oversupplied"
-}
-trajectory_profile: {
-  current_stage: "Early Discovery|Rising|Established|Maturing|Saturated",
-  historical_mirror: specific locality + year comparison,
-  future_trajectory: 1 sentence,
-  price_when_mirror_was_here, price_of_mirror_today, growth_multiple_achieved,
-  investor_window: "Early-Stage Opportunity|Active Appreciation Window|Late-Stage Entry|Post-Peak"
-}`,
-        2500, HAIKU),
+  Use realistic non-round numbers. Reflect COVID dip 2020-21, post-COVID recovery 2022-23.`,
+        600, HAIKU),
       ]);
 
       if(p2&&!Array.isArray(p2)) setReport(r=>({...r,...p2}));
       if(p3&&!Array.isArray(p3)) setReport(r=>({...r,...p3}));
       if(p4&&!Array.isArray(p4)) setReport(r=>({...r,...p4}));
+      if(p5&&!Array.isArray(p5)) setReport(r=>({...r,...p5}));
       setStreamChars(4);
-
-
     }catch(e){setError("Error: "+e.message);}
     setLoading(false);
   };
