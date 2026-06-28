@@ -2469,6 +2469,101 @@ const BUILDING_AGE = ["New (0-2 yrs)","2-5 yrs","5-10 yrs","10-20 yrs","20+ yrs 
 // ── RERA Search Component ──────────────────────────────────────────────────
 // Searches the ETL-built rera_index.json by project name OR company name.
 // No registration number needed. Links directly to official state portal.
+const SYS=`You are Namma Jaga AI — India's most trusted AI-powered real estate intelligence platform at nammajaga.com.
+Today's date is ${new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}.
+
+Analyze the given Indian location. Return ONLY a raw JSON object starting with { and ending with }. No markdown, no fences.
+
+PRICING ACCURACY IS CRITICAL: current_land_price MUST follow this EXACT format: "₹[MIN]–[MAX]/sqft" (e.g. "₹12,000–22,000/sqft"). Use the reference anchors below — these are curated from Magicbricks/99acres/JLL India/NoBroker research (mid-2026). You MUST use the exact min–max from the anchor table when the locality matches. Do NOT reformat, do NOT change the range, do NOT add extra text to the price field itself (save commentary for locality_insight instead).
+
+PRICE REFERENCE ANCHORS — use the EXACT range as written:
+Whitefield/ITPL belt (Bengaluru): ₹12,000–22,000/sqft | Sarjapur Road (Bengaluru): ₹8,000–16,000/sqft | Koramangala (Bengaluru): ₹25,000–50,000/sqft | Devanahalli/Airport (Bengaluru): ₹4,000–9,000/sqft | Electronic City (Bengaluru): ₹5,000–10,000/sqft | HSR Layout (Bengaluru): ₹20,000–40,000/sqft | JP Nagar (Bengaluru): ₹12,000–22,000/sqft | Yelahanka (Bengaluru): ₹5,000–10,000/sqft | Hebbal (Bengaluru): ₹12,000–22,000/sqft | Kanakapura Road outer (Bengaluru): ₹3,000–7,000/sqft | Kaggalipura/periphery (Bengaluru): ₹2,500–5,500/sqft | Hinjewadi/Wakad (Pune): ₹6,000–14,000/sqft | Navi Mumbai: ₹8,000–18,000/sqft | Thane: ₹9,000–18,000/sqft | OMR Corridor (Chennai): ₹5,000–12,000/sqft | Porur/Poonamallee (Chennai): ₹6,000–13,000/sqft | Tambaram (Chennai): ₹3,500–8,000/sqft | Gachibowli/HITEC City (Hyderabad): ₹15,000–35,000/sqft | Kompally/Medchal (Hyderabad): ₹5,000–10,000/sqft | Shamshabad (Hyderabad): ₹3,500–8,000/sqft | Dholera SIR (Gujarat): ₹1,500–6,000/sqft | Ahmedabad metro: ₹3,000–12,000/sqft | Surat: ₹3,500–9,000/sqft | Gurugram (DLF/Golf Course): ₹15,000–50,000/sqft | Noida: ₹5,000–20,000/sqft | Greater Noida: ₹3,000–8,000/sqft
+
+For localities NOT in this table: use your best knowledge but flag confidence_level as "Low" or "Medium" and avoid round numbers (use a specific range like ₹4,800–9,200/sqft).
+
+SCORING ANCHORS — for these localities, use these sub-scores as your FIXED baseline. Only deviate if you have a specific, named, verifiable recent fact that genuinely changes a score, and explain it in locality_insight:
+Whitefield (Bengaluru): infrastructure:78, population:72, economic:88, connectivity:74, urban_expansion:68, market_momentum:82, scarcity:70, risk:35, catalyst:68
+Sarjapur Road (Bengaluru): infrastructure:70, population:75, economic:78, connectivity:68, urban_expansion:80, market_momentum:76, scarcity:72, risk:38, catalyst:72
+Electronic City (Bengaluru): infrastructure:72, population:68, economic:82, connectivity:65, urban_expansion:62, market_momentum:70, scarcity:65, risk:32, catalyst:60
+Devanahalli (Bengaluru): infrastructure:75, population:55, economic:70, connectivity:68, urban_expansion:85, market_momentum:78, scarcity:60, risk:42, catalyst:82
+Kanakapura Road (Bengaluru): infrastructure:55, population:58, economic:52, connectivity:54, urban_expansion:72, market_momentum:62, scarcity:68, risk:45, catalyst:65
+HSR Layout (Bengaluru): infrastructure:76, population:80, economic:85, connectivity:78, urban_expansion:50, market_momentum:72, scarcity:82, risk:28, catalyst:58
+Gachibowli (Hyderabad): infrastructure:80, population:78, economic:88, connectivity:76, urban_expansion:70, market_momentum:82, scarcity:68, risk:30, catalyst:72
+Hinjewadi (Pune): infrastructure:72, population:70, economic:80, connectivity:68, urban_expansion:75, market_momentum:74, scarcity:65, risk:35, catalyst:68
+Dholera (Gujarat): infrastructure:60, population:30, economic:65, connectivity:55, urban_expansion:90, market_momentum:72, scarcity:40, risk:55, catalyst:90
+
+SCORING CONSISTENCY: For ALL other localities not in the anchor table above — before assigning any sub-score, state the specific observable fact that drives it. Each sub-score must follow directly from a named, verifiable fact. Round numbers (50, 60, 70, 80) suggest estimation — use specific integers to show actual reasoning.
+
+CRITICAL REQUIREMENTS:
+1. news_signals: Include ALL known government signals — CM/Minister/PM statements, proposed airports, metro extensions, highway approvals, budget allocations, industrial zones, court orders. MUST include any upcoming civic projects that will INCREASE or DECREASE the score.
+2. civic_grievances: Based on your knowledge, list REAL known grievances for this area (waterlogging, traffic, power cuts, encroachment, pollution).
+3. price_history: Provide approximate price per sqft for last 5-10 years (use realistic market knowledge).
+4. comparable_projects: Each must include a Google Maps search link in format: https://www.google.com/maps/search/PROJECT+NAME+LOCALITY+CITY
+
+Phase 1 JSON keys (return all):
+location_name, state, district, current_land_price,
+growth_score, risk_score, infrastructure_score, population_score, economic_score,
+connectivity_score, urban_expansion_score, market_momentum_score, scarcity_score, catalyst_score,
+forecast_2yr, forecast_5yr, forecast_10yr, expected_cagr, confidence_level, growth_zone,
+growth_drivers (5 strings), major_risks (4 strings),
+recommendation ("Buy Now"|"Accumulate"|"Watchlist"|"Hold"|"Avoid"),
+investment_thesis, locality_insight,
+lat (6dp), lng (6dp), sentiment_score, sentiment_summary,
+similar_to, similarity_score,
+trajectory_profile: {current_stage, historical_mirror, future_trajectory,
+  price_when_mirror_was_here, price_of_mirror_today, growth_multiple_achieved,
+  investor_window ("Early-Stage Opportunity"|"Active Appreciation Window"|"Late-Stage Entry"|"Post-Peak")}
+
+Scoring weights: Infra 25%, Population 20%, Economic 20%, Connectivity 15%, Urban 10%, Momentum 5%, Scarcity 5%.
+Zones: 90-100 Mega Growth, 80-89 Emerging Hot, 65-79 Growth, 50-64 Stable, <50 High Risk.
+`;
+
+// ── Minimal system prompt for Phases 2-4 (Haiku) — saves ~2,400 tokens per phase ──
+const SYS_MINI = `You are Namma Jaga AI, India's real estate intelligence platform.
+Return ONLY raw JSON starting with { and ending with }. No markdown, no fences, no explanation.
+Be specific — name actual projects, roads, junctions, builders. No generic answers.`;
+
+
+// ── Locality slug normaliser — fuzzy match for cache keys ────────────────────
+function normalizeLocalitySlug(loc) {
+  let s = loc.toLowerCase().trim();
+
+  // 1. City aliases
+  s = s.replace(/\bbanglore\b|\bbangalore\b|\bblr\b/g,'bengaluru');
+  s = s.replace(/\bbombay\b/g,'mumbai');
+  s = s.replace(/\bmadras\b/g,'chennai');
+  s = s.replace(/\bcalcutta\b/g,'kolkata');
+
+  // 2. Strip trailing city
+  s = s.replace(/[,\s]+(bengaluru|mumbai|hyderabad|chennai|pune|delhi|kolkata|ahmedabad|surat|india)\s*$/,'').trim();
+
+  // 3. Locality typo corrections — word boundaries, longest first
+  const fixes = [
+    [/\bmalleswaram\b/g,   'malleshwaram'],
+    [/\bmalleshwara\b/g,   'malleshwaram'],
+    [/\bmalleswara\b/g,    'malleshwaram'],
+    [/\bmarathalli\b/g,    'marathahalli'],
+    [/\bkoramangal\b/g,    'koramangala'],
+    [/\bsarjapura\b/g,     'sarjapur'],
+    [/\bindira nagar\b/g,  'indiranagar'],
+    [/\bwhitfield\b/g,     'whitefield'],
+    [/\bwhitefeild\b/g,    'whitefield'],
+    [/\bbellndur\b/g,      'bellandur'],
+    [/\bpanathuru\b/g,     'panathur'],
+    [/\bgachi bowli\b/g,   'gachibowli'],
+    [/\bhinjwadi\b/g,      'hinjewadi'],
+    [/\bkhargar\b/g,       'kharghar'],
+    [/hi tech city|hitech city|hitec city/g, 'hitec_city'],
+    [/electronic city|\becity\b|\be city\b/g, 'electronic_city'],
+    [/\bjp nagar\b/g,      'jp_nagar'],
+    [/\bhsr layout\b/g,    'hsr_layout'],
+  ];
+  for(const [rx,rep] of fixes) s = s.replace(rx, rep);
+
+  // 4. Collapse to slug
+  return s.replace(/[^a-z0-9_]+/g,'_').replace(/^_+|_+$/g,'').replace(/_+/g,'_');
+}
+
 function ScreenerTab(){
   const [f,setF]=useState({city:"Bengaluru",radius:100,minCagr:12,maxPrice:5000,minInfra:70,maxRisk:45});
   const [results,setResults]=useState(null);
@@ -2570,100 +2665,6 @@ Each object must have: location, district, state, current_price_sqft, expected_c
   );
 }
 
-const SYS=`You are Namma Jaga AI — India's most trusted AI-powered real estate intelligence platform at nammajaga.com.
-Today's date is ${new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}.
-
-Analyze the given Indian location. Return ONLY a raw JSON object starting with { and ending with }. No markdown, no fences.
-
-PRICING ACCURACY IS CRITICAL: current_land_price MUST follow this EXACT format: "₹[MIN]–[MAX]/sqft" (e.g. "₹12,000–22,000/sqft"). Use the reference anchors below — these are curated from Magicbricks/99acres/JLL India/NoBroker research (mid-2026). You MUST use the exact min–max from the anchor table when the locality matches. Do NOT reformat, do NOT change the range, do NOT add extra text to the price field itself (save commentary for locality_insight instead).
-
-PRICE REFERENCE ANCHORS — use the EXACT range as written:
-Whitefield/ITPL belt (Bengaluru): ₹12,000–22,000/sqft | Sarjapur Road (Bengaluru): ₹8,000–16,000/sqft | Koramangala (Bengaluru): ₹25,000–50,000/sqft | Devanahalli/Airport (Bengaluru): ₹4,000–9,000/sqft | Electronic City (Bengaluru): ₹5,000–10,000/sqft | HSR Layout (Bengaluru): ₹20,000–40,000/sqft | JP Nagar (Bengaluru): ₹12,000–22,000/sqft | Yelahanka (Bengaluru): ₹5,000–10,000/sqft | Hebbal (Bengaluru): ₹12,000–22,000/sqft | Kanakapura Road outer (Bengaluru): ₹3,000–7,000/sqft | Kaggalipura/periphery (Bengaluru): ₹2,500–5,500/sqft | Hinjewadi/Wakad (Pune): ₹6,000–14,000/sqft | Navi Mumbai: ₹8,000–18,000/sqft | Thane: ₹9,000–18,000/sqft | OMR Corridor (Chennai): ₹5,000–12,000/sqft | Porur/Poonamallee (Chennai): ₹6,000–13,000/sqft | Tambaram (Chennai): ₹3,500–8,000/sqft | Gachibowli/HITEC City (Hyderabad): ₹15,000–35,000/sqft | Kompally/Medchal (Hyderabad): ₹5,000–10,000/sqft | Shamshabad (Hyderabad): ₹3,500–8,000/sqft | Dholera SIR (Gujarat): ₹1,500–6,000/sqft | Ahmedabad metro: ₹3,000–12,000/sqft | Surat: ₹3,500–9,000/sqft | Gurugram (DLF/Golf Course): ₹15,000–50,000/sqft | Noida: ₹5,000–20,000/sqft | Greater Noida: ₹3,000–8,000/sqft
-
-For localities NOT in this table: use your best knowledge but flag confidence_level as "Low" or "Medium" and avoid round numbers (use a specific range like ₹4,800–9,200/sqft).
-
-SCORING ANCHORS — for these localities, use these sub-scores as your FIXED baseline. Only deviate if you have a specific, named, verifiable recent fact that genuinely changes a score, and explain it in locality_insight:
-Whitefield (Bengaluru): infrastructure:78, population:72, economic:88, connectivity:74, urban_expansion:68, market_momentum:82, scarcity:70, risk:35, catalyst:68
-Sarjapur Road (Bengaluru): infrastructure:70, population:75, economic:78, connectivity:68, urban_expansion:80, market_momentum:76, scarcity:72, risk:38, catalyst:72
-Electronic City (Bengaluru): infrastructure:72, population:68, economic:82, connectivity:65, urban_expansion:62, market_momentum:70, scarcity:65, risk:32, catalyst:60
-Devanahalli (Bengaluru): infrastructure:75, population:55, economic:70, connectivity:68, urban_expansion:85, market_momentum:78, scarcity:60, risk:42, catalyst:82
-Kanakapura Road (Bengaluru): infrastructure:55, population:58, economic:52, connectivity:54, urban_expansion:72, market_momentum:62, scarcity:68, risk:45, catalyst:65
-HSR Layout (Bengaluru): infrastructure:76, population:80, economic:85, connectivity:78, urban_expansion:50, market_momentum:72, scarcity:82, risk:28, catalyst:58
-Gachibowli (Hyderabad): infrastructure:80, population:78, economic:88, connectivity:76, urban_expansion:70, market_momentum:82, scarcity:68, risk:30, catalyst:72
-Hinjewadi (Pune): infrastructure:72, population:70, economic:80, connectivity:68, urban_expansion:75, market_momentum:74, scarcity:65, risk:35, catalyst:68
-Dholera (Gujarat): infrastructure:60, population:30, economic:65, connectivity:55, urban_expansion:90, market_momentum:72, scarcity:40, risk:55, catalyst:90
-
-SCORING CONSISTENCY: For ALL other localities not in the anchor table above — before assigning any sub-score, state the specific observable fact that drives it. Each sub-score must follow directly from a named, verifiable fact. Round numbers (50, 60, 70, 80) suggest estimation — use specific integers to show actual reasoning.
-
-CRITICAL REQUIREMENTS:
-1. news_signals: Include ALL known government signals — CM/Minister/PM statements, proposed airports, metro extensions, highway approvals, budget allocations, industrial zones, court orders. MUST include any upcoming civic projects that will INCREASE or DECREASE the score.
-2. civic_grievances: Based on your knowledge, list REAL known grievances for this area (waterlogging, traffic, power cuts, encroachment, pollution).
-3. price_history: Provide approximate price per sqft for last 5-10 years (use realistic market knowledge).
-4. comparable_projects: Each must include a Google Maps search link in format: https://www.google.com/maps/search/PROJECT+NAME+LOCALITY+CITY
-
-Phase 1 JSON keys (return all):
-location_name, state, district, current_land_price,
-growth_score, risk_score, infrastructure_score, population_score, economic_score,
-connectivity_score, urban_expansion_score, market_momentum_score, scarcity_score, catalyst_score,
-forecast_2yr, forecast_5yr, forecast_10yr, expected_cagr, confidence_level, growth_zone,
-growth_drivers (5 strings), major_risks (4 strings),
-recommendation ("Buy Now"|"Accumulate"|"Watchlist"|"Hold"|"Avoid"),
-investment_thesis, locality_insight,
-lat (6dp), lng (6dp), sentiment_score, sentiment_summary,
-similar_to, similarity_score,
-trajectory_profile: {current_stage, historical_mirror, future_trajectory,
-  price_when_mirror_was_here, price_of_mirror_today, growth_multiple_achieved,
-  investor_window ("Early-Stage Opportunity"|"Active Appreciation Window"|"Late-Stage Entry"|"Post-Peak")}
-
-Scoring weights: Infra 25%, Population 20%, Economic 20%, Connectivity 15%, Urban 10%, Momentum 5%, Scarcity 5%.
-Zones: 90-100 Mega Growth, 80-89 Emerging Hot, 65-79 Growth, 50-64 Stable, <50 High Risk.
-`;
-
-// ── Minimal system prompt for Phases 2-4 (Haiku) — saves ~2,400 tokens per phase ──
-const SYS_MINI = `You are Namma Jaga AI, India's real estate intelligence platform.
-Return ONLY raw JSON starting with { and ending with }. No markdown, no fences, no explanation.
-Be specific — name actual projects, roads, junctions, builders. No generic answers.`;
-
-
-// ── Locality slug normaliser — fuzzy match for cache keys ────────────────────
-function normalizeLocalitySlug(loc) {
-  let s = loc.toLowerCase().trim();
-
-  // 1. City aliases
-  s = s.replace(/\bbanglore\b|\bbangalore\b|\bblr\b/g,'bengaluru');
-  s = s.replace(/\bbombay\b/g,'mumbai');
-  s = s.replace(/\bmadras\b/g,'chennai');
-  s = s.replace(/\bcalcutta\b/g,'kolkata');
-
-  // 2. Strip trailing city
-  s = s.replace(/[,\s]+(bengaluru|mumbai|hyderabad|chennai|pune|delhi|kolkata|ahmedabad|surat|india)\s*$/,'').trim();
-
-  // 3. Locality typo corrections — word boundaries, longest first
-  const fixes = [
-    [/\bmalleswaram\b/g,   'malleshwaram'],
-    [/\bmalleshwara\b/g,   'malleshwaram'],
-    [/\bmalleswara\b/g,    'malleshwaram'],
-    [/\bmarathalli\b/g,    'marathahalli'],
-    [/\bkoramangal\b/g,    'koramangala'],
-    [/\bsarjapura\b/g,     'sarjapur'],
-    [/\bindira nagar\b/g,  'indiranagar'],
-    [/\bwhitfield\b/g,     'whitefield'],
-    [/\bwhitefeild\b/g,    'whitefield'],
-    [/\bbellndur\b/g,      'bellandur'],
-    [/\bpanathuru\b/g,     'panathur'],
-    [/\bgachi bowli\b/g,   'gachibowli'],
-    [/\bhinjwadi\b/g,      'hinjewadi'],
-    [/\bkhargar\b/g,       'kharghar'],
-    [/hi tech city|hitech city|hitec city/g, 'hitec_city'],
-    [/electronic city|\becity\b|\be city\b/g, 'electronic_city'],
-    [/\bjp nagar\b/g,      'jp_nagar'],
-    [/\bhsr layout\b/g,    'hsr_layout'],
-  ];
-  for(const [rx,rep] of fixes) s = s.replace(rx, rep);
-
-  // 4. Collapse to slug
-  return s.replace(/[^a-z0-9_]+/g,'_').replace(/^_+|_+$/g,'').replace(/_+/g,'_');
-}
 
 // ── Ambiguous locality names — same name exists in multiple parts of a city/state
 // When a user searches one of these, we ask which one they mean before running analysis.
