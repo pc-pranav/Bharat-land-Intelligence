@@ -2907,11 +2907,11 @@ function AnalyzeTab({initialQuery="",onClear}){
     const aiLoc = placeData?.display || loc;   // use Google's canonical name if available
 
     // call() — handles SSE streaming (prod) and plain JSON (artifact preview)
-    const call=async(phase,prompt,maxTok)=>{
+    const call=async(phase,prompt,maxTok,model="claude-sonnet-4-6")=>{
       const res=await fetch(API_ENDPOINT,{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
-          model:"claude-sonnet-4-6",max_tokens:maxTok,temperature:0,
+          model,max_tokens:maxTok,temperature:0,
           system:[{type:"text",text:SYS,cache_control:{type:"ephemeral"}}],
           messages:[{role:"user",content:prompt}],
           cacheKey:`analyze_${slug}_p${phase}`,cacheType:"analyze"
@@ -3004,7 +3004,7 @@ major_risks: array of 4 strings, each specific and named (not generic),
 locality_insight: 3-4 sentences explaining your scoring decisions with specific facts,
 sentiment_score (int 1-100), sentiment_summary (string),
 similar_to (string), similarity_score (string)`,
-        1800
+        2200
       );
       // p1 errors throw inside call() — this should never be null if call() succeeded
       // Inject Places Autocomplete coords if AI returns imprecise ones
@@ -3018,12 +3018,15 @@ similar_to (string), similarity_score (string)`,
       if(p1.lat&&p1.lng) setPins([{...p1,location:p1.location_name}]);
       setStreamChars(1);
 
-      if(p1.lat&&p1.lng) setPins([{...p1,location:p1.location_name}]);
-      setStreamChars(1);
+      // ── Phases 2+3+4: Parallel on Haiku (4-5x faster, 3x cheaper) ────────
+      // p1 (Sonnet) is already shown. Now fire p2/p3/p4 simultaneously.
+      const HAIKU = "claude-haiku-4-5-20251001";
 
-      // ── Phase 2: Market signals + projects + comparables ──────────────────
-      const p2=await call(2,
-        `Analyze "${aiLoc}, India" for a property investor. Return ONLY compact raw JSON with these fields:
+      const [p2, p3, p4] = await Promise.all([
+
+        // Phase 2 — Market signals, civic projects, comparables
+        call(2, `Analyze "${aiLoc}, India" for a property investor.
+Return ONLY compact raw JSON (no explanation, no markdown):
 
 news_signals: array of 4 objects {
   headline (specific named headline),
@@ -3038,14 +3041,10 @@ upcoming_civic_projects: array of 4 objects {
   expected_completion, score_impact (e.g. "+6"), price_impact
 }
 comparable_projects: array of 3 objects {name, rate_sqft, maps_link}`,
-        1500
-      );
-      if(p2&&!Array.isArray(p2)) setReport(r=>({...r,...p2}));
-      setStreamChars(2);
+        1500, HAIKU),
 
-      // ── Phase 3: Traffic + water + civic grievances ───────────────────────
-      const p3=await call(3,
-        `Analyze "${aiLoc}, India". Return ONLY compact raw JSON with these fields:
+        // Phase 3 — Traffic, water, civic grievances
+        call(3, `Analyze "${aiLoc}", India. Return ONLY compact raw JSON:
 
 traffic_intelligence: {
   peak_hour_congestion: "Severe|High|Moderate|Low",
@@ -3057,22 +3056,18 @@ traffic_intelligence: {
   metro_bus_connectivity: "Excellent|Good|Average|Poor",
   parking_situation: "Easy|Moderate|Difficult|Very Difficult",
   weekend_vs_weekday: one sentence,
-  future_relief: one sentence on planned relief,
+  future_relief: one sentence on planned road/metro relief,
   investor_impact: one sentence on property value impact
 }
 water_quality_note: 2-3 sentences — source, TDS, seasonal issues.
 civic_grievances: array of 4 specific strings naming actual streets/locations.`,
-        1500
-      );
-      if(p3&&!Array.isArray(p3)) setReport(r=>({...r,...p3}));
-      setStreamChars(3);
+        1500, HAIKU),
 
-      // ── Phase 4: Price history + ripple + absorption + trajectory ─────────
-      const p4=await call(4,
-        `Analyze "${aiLoc}, India". Return ONLY compact raw JSON with these fields:
+        // Phase 4 — Price history, ripple, absorption, trajectory
+        call(4, `Analyze "${aiLoc}", India. Return ONLY compact raw JSON:
 
 price_history: array of 9 objects {year: int, price_sqft: int} from 2015-2025.
-  Use realistic non-round numbers. Reflect COVID dip in 2020-21.
+  Use realistic non-round numbers. Reflect COVID dip 2020-21.
 
 ripple_signal: {
   overflow_from: "hub name and avg price",
@@ -3096,10 +3091,14 @@ trajectory_profile: {
   price_when_mirror_was_here, price_of_mirror_today, growth_multiple_achieved,
   investor_window: "Early-Stage Opportunity|Active Appreciation Window|Late-Stage Entry|Post-Peak"
 }`,
-        1800
-      );
+        1800, HAIKU),
+      ]);
+
+      if(p2&&!Array.isArray(p2)) setReport(r=>({...r,...p2}));
+      if(p3&&!Array.isArray(p3)) setReport(r=>({...r,...p3}));
       if(p4&&!Array.isArray(p4)) setReport(r=>({...r,...p4}));
       setStreamChars(4);
+
 
     }catch(e){setError("Error: "+e.message);}
     setLoading(false);
@@ -3759,7 +3758,7 @@ function getLocalityRate(locality, city, propKind) {
 // ── AI rate premium by locality tier (+2k–3k/sqft) ─────────────────────────
 // Applied on top of AI market_rate_sqft — AI tends to underestimate
 // on-ground premiums in high-demand micro-markets
-function getAIPremium(locality, city) {
+function getAIPremium(canonicalLocality, canonicalCity) {
   if(!locality) return 2000;
   const loc = (locality + ' ' + (city||'')).toLowerCase();
   const tier3k = ['koramangala','indiranagar','bandra','worli','lower parel',
@@ -3954,6 +3953,95 @@ const PricerEstimateBar = React.memo(function PricerEstimateBar({calcEstimate, c
 });
 
 
+// ── Pricer locality search — Places autocomplete without the Analyze button ───
+function PricerLocationSearch({value, onChange, onSelect}) {
+  const [suggestions, setSuggestions] = React.useState([]);
+  const [showDrop,    setShowDrop]    = React.useState(false);
+  const [fetching,    setFetching]    = React.useState(false);
+  const debounceRef = React.useRef(null);
+
+  const fetchSuggestions = React.useCallback(async (q) => {
+    if(q.trim().length < 2){ setSuggestions([]); setShowDrop(false); return; }
+    setFetching(true);
+    try {
+      const res  = await fetch(`/api/maps?type=autocomplete&q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      setSuggestions(data.predictions || []);
+      setShowDrop((data.predictions||[]).length > 0);
+    } catch(e) { setSuggestions([]); setShowDrop(false); }
+    setFetching(false);
+  }, []);
+
+  const handleChange = (val) => {
+    onChange(val);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => fetchSuggestions(val), 220);
+  };
+
+  const handleSelect = async (pred) => {
+    onChange(pred.description);
+    setShowDrop(false); setSuggestions([]);
+    try {
+      const res  = await fetch(`/api/maps?type=geocode&place_id=${encodeURIComponent(pred.place_id)}`);
+      const data = await res.json();
+      if(data.result) onSelect({ ...data.result, placeId: data.result.place_id });
+      else onSelect({ placeId: pred.place_id, display: pred.description, city: '', locality: pred.main_text });
+    } catch(e) {
+      onSelect({ placeId: pred.place_id, display: pred.description, city: '', locality: pred.main_text });
+    }
+  };
+
+  return (
+    <div style={{position:'relative', width:'100%'}}>
+      <div style={{position:'relative'}}>
+        <span style={{position:'absolute', left:8, top:'50%', transform:'translateY(-50%)',
+          fontSize:12, pointerEvents:'none', opacity:0.45}}>📍</span>
+        <input
+          value={value}
+          onChange={e => handleChange(e.target.value)}
+          onFocus={() => suggestions.length > 0 && setShowDrop(true)}
+          onBlur={() => setTimeout(() => setShowDrop(false), 150)}
+          placeholder="e.g. Whitefield, Bengaluru"
+          style={{...IS, width:'100%', paddingLeft:26}}
+        />
+        {fetching&&<span style={{position:'absolute', right:8, top:'50%',
+          transform:'translateY(-50%)', fontSize:10, color:C.muted}}>…</span>}
+      </div>
+
+      {showDrop&&suggestions.length>0&&(
+        <div style={{position:'absolute', top:'calc(100% + 3px)', left:0, right:0,
+          background:'#fff', border:`1px solid ${C.border}`, borderRadius:9,
+          boxShadow:'0 6px 20px rgba(0,0,0,.1)', zIndex:1000, overflow:'hidden'}}>
+          {suggestions.map((pred, i) => (
+            <div key={pred.place_id}
+              onMouseDown={() => handleSelect(pred)}
+              style={{padding:'8px 12px', cursor:'pointer',
+                borderBottom: i<suggestions.length-1 ? `1px solid ${C.border}` : 'none',
+                background:'transparent', transition:'background .1s'}}
+              onMouseEnter={e => e.currentTarget.style.background='#F8FAFF'}
+              onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+              <div style={{fontFamily:'Inter,sans-serif', fontSize:11, fontWeight:600, color:C.dark}}>
+                📍 {pred.main_text}
+              </div>
+              {pred.secondary&&(
+                <div style={{fontFamily:'Inter,sans-serif', fontSize:10, color:C.muted, marginTop:1}}>
+                  {pred.secondary}
+                </div>
+              )}
+            </div>
+          ))}
+          <div style={{padding:'4px 12px', background:'#F8FAFF',
+            fontFamily:'Inter,sans-serif', fontSize:9, color:C.muted,
+            borderTop:`1px solid ${C.border}`}}>
+            Powered by Google Maps
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 // ── Collapsible group card — defined outside PricerTab so React.memo works ────
 const PricerGroup = React.memo(function PricerGroup({open, onToggle, icon, title, badge, children}) {
   return (
@@ -3983,6 +4071,7 @@ function PricerTab(){
   // ── Shared state (used by both modes) ─────────────────────────────────────
   const [city, setCity]         = useState("Bengaluru");
   const [locality, setLocality] = useState("");
+  const [pricerPlaceData, setPricerPlaceData] = useState(null); // Places Autocomplete result
   const [propType, setPropType] = useState("Apartment / Flat");
   const [bhk, setBhk]           = useState("2 BHK");
   const [areaType, setAreaType] = useState("Carpet Area");
@@ -4137,7 +4226,9 @@ function PricerTab(){
   const civicPremium   = (civicScore-50)*8;
   const viewPremium    = (hasLakeView?350:0)+(hasGardenView?200:0)+(hasParkView?150:0)+(hasCityView?220:0)+(hasDuplex?600:0)+(hasServantRoom?120:0);
   const propKind       = isPlot?"plot":isVilla?"villa":isPenthouse?"penthouse":"apartment";
-  const BASE_RATE      = getCityTierRate(city,propKind,locality);
+  const canonicalLocality = pricerPlaceData?.locality || locality;
+  const canonicalCity     = pricerPlaceData?.city     || city;
+  const BASE_RATE         = getCityTierRate(canonicalCity, propKind, canonicalLocality);
   const normCorrFactor = priceCorrections.length>0
     ? priceCorrections.slice(-3).reduce((s,c)=>s+c.factor,0)/Math.min(3,priceCorrections.length)
     : 1.0;
@@ -4287,7 +4378,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
       const text = d.content?.map(b=>b.text||"").join("")||"";
       const parsed = parseJSON(text);
       if(parsed) {
-        const aiPremium = getAIPremium(locality, city);
+        const aiPremium = getAIPremium(canonicalLocality, canonicalCity);
         const adjRate  = (parsed.market_rate_sqft||0) + aiPremium;
         const adjTotal = adjRate * (isPlot ? (+plotArea||1200) : (+area||1200));
         setResult({
@@ -4393,8 +4484,11 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
           display:"flex",flexDirection:"column",gap:10}}>
           <div>
               <div style={LS}>Locality / Project</div>
-              <input value={locality} onChange={e=>setLocality(e.target.value)}
-                placeholder="e.g. Whitefield, Bengaluru" style={{...IS,width:"100%"}}/>
+              <PricerLocationSearch
+                value={locality}
+                onChange={v=>{ setLocality(v); if(pricerPlaceData&&v!==pricerPlaceData.display) setPricerPlaceData(null); }}
+                onSelect={pd=>{ setPricerPlaceData(pd); setLocality(pd.display); if(pd.city) setCity(pd.city); }}
+              />
             </div>
           <div style={{display:"flex",gap:8}}>
             <div style={{flex:1}}><div style={LS}>Type</div>
