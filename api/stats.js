@@ -110,9 +110,7 @@ export default async function handler(req, res) {
         const sonnetOut = Math.round(outTok * 0.25);
         const haikuOut  = outTok - sonnetOut;
 
-        const costUSD =
-          calcCostUSD('claude-sonnet-4-6', sonnetIn,  cacheCreateTok, Math.round(cacheReadTok * 0.3),  sonnetOut) +
-          calcCostUSD('claude-haiku-4-5',  haikuIn,   0,               Math.round(cacheReadTok * 0.7), haikuOut);
+        const costUSD = (parseInt(tok.cost_millicents || 0)) / 100000;
 
         const totalActions = parseInt(act.total || 0);
         const cacheHits    = parseInt(act.redis_hit || 0);

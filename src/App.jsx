@@ -1214,13 +1214,24 @@ function Ring({score,label,size=72}){
 }
 
 const SINFO=[
-  {l:"Infrastructure Impact",w:"25%",c:"#2563EB",d:"Bharatmala highways, expressways, DFCs, metro lines, airports, industrial corridors, PM Gati Shakti."},
-  {l:"Population Growth",w:"20%",c:"#0891B2",d:"Census trends, urbanization rate, migration patterns, household formation, schools & hospitals."},
-  {l:"Economic Activity",w:"20%",c:"#7C3AED",d:"New factories, GCC/IT expansion, warehousing demand, tourism, hospitality, government capex."},
-  {l:"Connectivity",w:"15%",c:"#1E6B4A",d:"Travel time to highway, expressway, airport, metro, railway, industrial corridor, tier-1 city."},
-  {l:"Urban Expansion",w:"10%",c:"#D97706",d:"Satellite-tracked built-up area growth, new roads, land conversion from agricultural use."},
-  {l:"Market Momentum",w:"5%",c:"#C84B31",d:"Historical price appreciation, transaction volumes, building permits, layout approvals."},
-  {l:"Scarcity",w:"5%",c:"#64748B",d:"Developable land availability, agricultural conversion constraints, supply vs demand pipeline."},
+  {l:"Infrastructure Impact",w:"25%",c:"#2563EB",k:"infrastructure_score",
+    d:"Bharatmala highways, expressways, DFCs, metro lines, airports, industrial corridors, DMIC, PM Gati Shakti nodes — both existing and under construction."},
+  {l:"Population Growth",w:"20%",c:"#0891B2",k:"population_score",
+    d:"Census trends, urbanisation rate, net migration, household formation rate, density of schools, hospitals and civic services."},
+  {l:"Economic Activity",w:"20%",c:"#7C3AED",k:"economic_score",
+    d:"New factories, GCC / IT park announcements, warehousing and logistics demand, SEZ activity, tourism, hospitality, government capex and MSME density."},
+  {l:"Connectivity",w:"15%",c:"#1E6B4A",k:"connectivity_score",
+    d:"Travel time to nearest highway / expressway, airport, metro station, railway junction, industrial corridor and Tier-1 city CBD."},
+  {l:"Urban Expansion",w:"10%",c:"#D97706",k:"urban_expansion_score",
+    d:"Satellite-tracked built-up area growth (2015–present), new road formation, agricultural land conversion rate, ULB boundary extensions."},
+  {l:"Market Momentum",w:"5%",c:"#C84B31",k:"market_momentum_score",
+    d:"5-year price CAGR, transaction volume trends, building permit issuance, layout approvals, new project launches by branded developers."},
+  {l:"Scarcity",w:"5%",c:"#64748B",k:"scarcity_score",
+    d:"Developable land availability, FSI / FAR constraints, RERA supply pipeline vs absorption, agricultural conversion difficulty."},
+  {l:"Catalyst Score",w:"Bonus",c:"#059669",k:"catalyst_score",
+    d:"One-time upside triggers — Smart City mission selection, state capital relocation, Special Investment Region, DPIIT logistics hub, major anchor tenant (airport, university, hospital)."},
+  {l:"Risk Score",w:"Watch",c:"#EF4444",k:"risk_score",
+    d:"Flood / seismic zones, disputed titles, litigation-heavy belts, single-employer dependency, slow civic body, oversupply risk, proximity to industrial hazard zones. Higher = more risk."},
 ];
 function ScoreModal({onClose}){
   return(
@@ -1229,13 +1240,21 @@ function ScoreModal({onClose}){
         <div style={{background:C.navy,padding:"15px 20px",borderRadius:"14px 14px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div>
             <div style={{color:"#F8FAFB",fontFamily:"serif",fontSize:16}}>How Scores Are Calculated</div>
-            <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:11,marginTop:2}}>Weighted average of 7 intelligence dimensions</div>
+            <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:11,marginTop:2}}>9-factor model — 7 weighted dimensions + Catalyst boost + Risk penalty</div>
           </div>
           <button onClick={onClose} style={{background:"#1E293B",border:"none",color:"#94A3B8",borderRadius:6,width:28,height:28,cursor:"pointer",fontWeight:700,fontSize:14}}>✕</button>
         </div>
         <div style={{padding:"14px 20px 20px"}}>
-          <div style={{background:C.bg,borderRadius:8,padding:"10px 12px",marginBottom:12,fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark,lineHeight:1.6}}>
-            <strong>Formula:</strong> Growth Score = (Infra×0.25)+(Pop×0.20)+(Econ×0.20)+(Conn×0.15)+(Urban×0.10)+(Mom×0.05)+(Scarcity×0.05)
+          <div style={{background:C.bg,borderRadius:8,padding:"10px 12px",marginBottom:8,fontFamily:"Inter,sans-serif",fontSize:12,color:C.dark,lineHeight:1.6}}>
+            <strong>Formula:</strong> Growth Score = (Infra×0.25)+(Pop×0.20)+(Econ×0.20)+(Conn×0.15)+(Urban×0.10)+(Mom×0.05)+(Scarcity×0.05) ± Catalyst/Risk adjustments
+          </div>
+          <div style={{display:"flex",gap:6,marginBottom:12}}>
+            {[["🟢 Bonus","Catalyst adds upside","#059669"],["🔴 Watch","Risk penalises score","#EF4444"],["📊 Zones","90–100 Mega · 80–89 Hot · 65–79 Growth · 50–64 Stable · <50 High Risk","#2563EB"]].map(([tag,desc,col])=>(
+              <div key={tag} style={{flex:1,background:col+"10",border:`1px solid ${col}30`,borderRadius:7,padding:"6px 8px"}}>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:9,fontWeight:700,color:col,marginBottom:2}}>{tag}</div>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:"#64748B",lineHeight:1.4}}>{desc}</div>
+              </div>
+            ))}
           </div>
           {SINFO.map((s,i)=>(
             <div key={i} style={{borderBottom:i<SINFO.length-1?`1px solid ${C.border}`:"none",padding:"9px 0"}}>
