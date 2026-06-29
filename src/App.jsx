@@ -1989,7 +1989,10 @@ function KarnatakaInfraCard({locationName}){
 }
 
 
-function ReportCard({data,pins}){
+
+      
+
+function ReportCard({data,pins,timing}){
   const [modal,setModal]=useState(false);
   const [showScoreInfo,setShowScoreInfo]=useState(false);
   if(!data) return null;
@@ -2460,6 +2463,61 @@ function ReportCard({data,pins}){
         </div>
       )}
 
+      {/* ── Query Performance ───────────────────────────────────────── */}
+      {timing&&(
+        <div style={{background:"#0F1B2D",borderRadius:12,padding:"14px 16px",marginTop:10,
+          border:"1px solid rgba(255,255,255,0.08)"}}>
+          <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:9,
+            fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>
+            ⚡ Query Performance
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
+            {[
+              ["First Score",`${(timing.p1ms/1000).toFixed(1)}s`,"P1 Sonnet · scores visible","#4ADE80"],
+              ["Full Report",`${(timing.totalMs/1000).toFixed(1)}s`,"All 5 phases complete","#60A5FA"],
+              ["P2-5 Time",`${((timing.totalMs-timing.p1ms)/1000).toFixed(1)}s`,"Haiku · ran in parallel","#FCD34D"],
+            ].map(([l,v,sub,col])=>(
+              <div key={l} style={{background:"rgba(255,255,255,0.06)",borderRadius:8,
+                padding:"10px 6px",textAlign:"center"}}>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:8,color:"#64748B",
+                  fontWeight:600,marginBottom:4,textTransform:"uppercase"}}>{l}</div>
+                <div style={{fontFamily:"Georgia,serif",fontSize:18,fontWeight:900,color:col}}>{v}</div>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:8,color:"#475569",marginTop:3}}>{sub}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{marginBottom:8}}>
+            <div style={{display:"flex",justifyContent:"space-between",
+              fontFamily:"Inter,sans-serif",fontSize:9,color:"#64748B",marginBottom:5}}>
+              <span>Phase timeline</span><span>Started {timing.startedAt}</span>
+            </div>
+            <div style={{position:"relative",height:20,background:"rgba(255,255,255,0.06)",
+              borderRadius:10,overflow:"hidden"}}>
+              <div style={{position:"absolute",left:0,top:0,height:"100%",
+                width:`${Math.round(timing.p1ms/timing.totalMs*100)}%`,
+                background:"linear-gradient(90deg,#1B2D6B,#2563EB)",
+                display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <span style={{fontFamily:"Inter,sans-serif",fontSize:8,color:"#fff",fontWeight:700}}>
+                  P1 {(timing.p1ms/1000).toFixed(1)}s</span>
+              </div>
+              <div style={{position:"absolute",
+                left:`${Math.round(timing.p1ms/timing.totalMs*100)}%`,top:0,height:"100%",
+                width:`${Math.round((timing.totalMs-timing.p1ms)/timing.totalMs*100)}%`,
+                background:"rgba(96,165,250,0.35)",
+                display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <span style={{fontFamily:"Inter,sans-serif",fontSize:8,color:"#93C5FD",fontWeight:700}}>
+                  P2-5 {((timing.totalMs-timing.p1ms)/1000).toFixed(1)}s</span>
+              </div>
+            </div>
+          </div>
+          <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:"#475569",
+            textAlign:"center",borderTop:"1px solid rgba(255,255,255,0.06)",paddingTop:8}}>
+            {timing.totalMs<12000?"🚀 Fast":timing.totalMs<20000?"✅ Normal":"🐢 Slow — peak hours"}
+            &nbsp;·&nbsp;Wall time {(timing.totalMs/1000).toFixed(1)}s
+            &nbsp;·&nbsp;Phases 2-5 ran in parallel
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2962,6 +3020,7 @@ function AnalyzeTab({initialQuery="",onClear}){
   },[initialQuery]);
 
   const [streamChars,setStreamChars]=useState(0); // repurposed as an elapsed-time tick counter for staged progress messages below
+  const [timing,setTiming]=useState(null); // {p1ms, totalMs, startedAt}
 
   useEffect(()=>{
     if(!loading){setStreamChars(0);return;}
@@ -2980,7 +3039,8 @@ function AnalyzeTab({initialQuery="",onClear}){
       if(ambig.length>0&&disambigOptions.length===0){setDisambigOptions(ambig);return;}
     }
     setDisambigOptions([]);
-    setLoading(true);setReport(null);setError("");setPins([]);setStreamChars(0);setPlaceData(null);
+    setLoading(true);setReport(null);setError("");setPins([]);setStreamChars(0);setPlaceData(null);setTiming(null);
+    const _t0=Date.now();
 
     // ── Cache key: place_id (permanent, canonical) or normalised slug ─────────
     const slug = placeData?.placeId
@@ -3107,6 +3167,7 @@ similar_to (string), similarity_score (string)`,
       if(p1.lat&&p1.lng) setPins([{...p1,location:p1.location_name}]);
       trackEvent('analyze', { locality: aiLoc });
       setStreamChars(1);
+      const _t1=Date.now();
 
       // ── Phases 2-5: ALL parallel on Haiku ────────────────────────────────
       const HAIKU = "claude-haiku-4-5-20251001";
@@ -3182,6 +3243,8 @@ price_history: array of 9 objects {year: int, price_sqft: int} from 2015-2025.
       if(p4&&!Array.isArray(p4)) setReport(r=>({...r,...p4}));
       if(p5&&!Array.isArray(p5)) setReport(r=>({...r,...p5}));
       setStreamChars(4);
+      const _t2=Date.now();
+      setTiming({p1ms:_t1-_t0, totalMs:_t2-_t0, startedAt:new Date(_t0).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'})});
     }catch(e){setError("Error: "+e.message);}
     setLoading(false);
   };
@@ -3269,7 +3332,7 @@ price_history: array of 9 objects {year: int, price_sqft: int} from 2015-2025.
         <>
           <div style={{fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:600,color:C.dark}}>🗺️ {report.location_name} on India Growth Map</div>
           <MapView pins={pins} selectedState={report.state} height={270} focusLat={report.lat} focusLng={report.lng} focusZoom={14} localityName={q}/>
-          <ReportCard data={report} pins={pins}/>
+          <ReportCard data={report} pins={pins} timing={timing}/>
         </>
       )}
     </div>
