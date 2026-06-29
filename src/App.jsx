@@ -5,6 +5,18 @@ import React, { useState, useEffect, useRef, useMemo, Component } from "react";
 // "/api/claude" so requests route through the serverless proxy — which keeps your
 // API key server-side AND adds response caching (see DEPLOY.md and lib/cache.js).
 // To deploy: change the line below to const API_ENDPOINT = "/api/claude";
+const STATS_ENDPOINT = "/api/stats";
+
+// Fire-and-forget analytics — never throws, never blocks
+function trackEvent(event, data = {}) {
+  try {
+    fetch(STATS_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event, data }),
+    }).catch(() => {});
+  } catch(_) {}
+}
 
 // ── Runtime data loader ────────────────────────────────────────────────────
 // Fetches ETL pipeline outputs from /data/ at runtime. The app boots with
@@ -76,7 +88,6 @@ function useAppData() {
   return dataReady;
 }
 
-const API_ENDPOINT = "/api/claude";
 
 const C = {
   navy:"#0F1B2D", bg:"#F8FAFB", green:"#1E6B4A", red:"#C84B31",
@@ -2642,6 +2653,7 @@ function ScreenerTab(){
 
   const run=async()=>{
     setLoading(true);setResults(null);setError("");
+      trackEvent('screener', { city: f.city });
     try{
       const prompt=`You are Namma Jaga AI. Find 5 real land investment opportunities within ${f.radius} km of ${f.city}, India.
 Filters: Min CAGR ${f.minCagr}%, Max price Rs${f.maxPrice}/sqft, Min infra score ${f.minInfra}/100, Max risk ${f.maxRisk}/100.
@@ -3092,6 +3104,7 @@ similar_to (string), similarity_score (string)`,
       }
       setReport(p1);
       if(p1.lat&&p1.lng) setPins([{...p1,location:p1.location_name}]);
+      trackEvent('analyze', { locality: aiLoc });
       setStreamChars(1);
 
       // ── Phases 2-5: ALL parallel on Haiku ────────────────────────────────
@@ -4520,6 +4533,7 @@ function PricerTab(){
     const _loc       = _canonical.trim();
     if(!_loc) { setError("Please enter a locality in the Property step first"); return; }
     setLoading(true); setResult(null); setError(""); setShowFeedback(false);
+    trackEvent('pricer', { locality: _loc });
     const est = calcEstimate();
     const gst = calcGST(est.total);
     const amenList = amenityMode==="count"
@@ -5712,8 +5726,290 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
 }
 
 
+// ══════════════════════════════════════════════════════════════════════════════
+// STATS DASHBOARD TAB
+// ══════════════════════════════════════════════════════════════════════════════
+function StatsTab() {
+  const [data,    setData]    = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error,   setError]   = React.useState("");
+  const [days,    setDays]    = React.useState(7);
+  const [lastRefresh, setLastRefresh] = React.useState(null);
+  const timerRef = React.useRef(null);
+
+  const load = React.useCallback(async (d) => {
+    setLoading(true); setError("");
+    try {
+      const res = await fetch(`/api/stats?days=${d}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      setData(json);
+      setLastRefresh(new Date());
+    } catch(e) { setError("Failed to load stats: " + e.message); }
+    setLoading(false);
+  }, []);
+
+  React.useEffect(() => {
+    load(days);
+    // Auto-refresh every 60s
+    timerRef.current = setInterval(() => load(days), 60000);
+    return () => clearInterval(timerRef.current);
+  }, [days, load]);
+
+  const fmtNum  = n => n == null ? "—" : n >= 1e6 ? (n/1e6).toFixed(2)+"M" : n >= 1e3 ? (n/1e3).toFixed(1)+"K" : String(Math.round(n));
+  const fmtCost = n => n == null ? "—" : `₹${n.toFixed(2)}`;
+  const fmtPct  = n => n == null ? "—" : `${n}%`;
+  const barW    = (val, max) => max > 0 ? Math.round((val/max)*100) : 0;
+
+  const S = { // styles
+    card:  {background:"#fff", borderRadius:12, border:"1px solid #E2E8F0", padding:"14px 16px", marginBottom:10},
+    label: {fontFamily:"Inter,sans-serif", fontSize:9, fontWeight:700, color:"#94A3B8", textTransform:"uppercase", letterSpacing:1, marginBottom:4},
+    big:   {fontFamily:"Georgia,serif", fontSize:22, fontWeight:900, color:"#0F172A"},
+    sub:   {fontFamily:"Inter,sans-serif", fontSize:10, color:"#64748B", marginTop:2},
+    row:   {display:"flex", gap:8, marginBottom:10},
+    half:  {flex:1, background:"#fff", borderRadius:10, border:"1px solid #E2E8F0", padding:"12px"},
+    hdr:   {fontFamily:"Inter,sans-serif", fontSize:12, fontWeight:700, color:"#1E293B", marginBottom:10},
+    bar:   (pct,col) => ({height:6, borderRadius:3, background:col||"#2563EB", width:`${pct}%`, transition:"width 0.4s"}),
+    barBg: {height:6, borderRadius:3, background:"#F1F5F9", overflow:"hidden", marginBottom:2},
+  };
+
+  if (loading && !data) return (
+    <div style={{textAlign:"center",padding:"60px 16px",color:"#94A3B8",fontFamily:"Inter,sans-serif"}}>
+      <div style={{fontSize:32,marginBottom:12}}>📊</div>
+      Loading analytics…
+    </div>
+  );
+
+  if (error && !data) return (
+    <div style={{margin:16,padding:14,background:"#FEF2F2",border:"1px solid #FCA5A5",
+      borderRadius:10,color:"#DC2626",fontFamily:"Inter,sans-serif",fontSize:12}}>
+      {error}
+      <button onClick={()=>load(days)} style={{marginLeft:10,background:"#DC2626",color:"#fff",
+        border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:11}}>Retry</button>
+    </div>
+  );
+
+  const t = data?.totals || {};
+  const daily = data?.daily || [];
+  const topQ  = data?.topQueries || [];
+
+  // Chart: last N days bar chart for actions
+  const maxActions = Math.max(...daily.map(d=>d.actions.total), 1);
+  const maxOut     = Math.max(...daily.map(d=>d.tokens.out), 1);
+
+  return (
+    <div style={{padding:"0 0 80px"}}>
+
+      {/* Header row */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:15,color:"#0F172A"}}>
+          📊 Analytics Dashboard
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          {lastRefresh && (
+            <span style={{fontFamily:"Inter,sans-serif",fontSize:9,color:"#94A3B8"}}>
+              {lastRefresh.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}
+            </span>
+          )}
+          <button onClick={()=>load(days)} disabled={loading}
+            style={{background:loading?"#E2E8F0":"#1B2D6B",color:loading?"#94A3B8":"#fff",
+              border:"none",borderRadius:6,padding:"5px 10px",fontSize:10,fontWeight:600,
+              fontFamily:"Inter,sans-serif",cursor:loading?"default":"pointer"}}>
+            {loading?"…":"↺ Refresh"}
+          </button>
+        </div>
+      </div>
+
+      {/* Time range selector */}
+      <div style={{display:"flex",gap:6,marginBottom:14}}>
+        {[7,14,30,90].map(d=>(
+          <button key={d} onClick={()=>setDays(d)}
+            style={{flex:1,padding:"7px 0",borderRadius:8,border:"1.5px solid",
+              borderColor:days===d?"#2563EB":"#E2E8F0",
+              background:days===d?"#EFF6FF":"#fff",
+              color:days===d?"#2563EB":"#64748B",
+              fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:11,cursor:"pointer"}}>
+            {d}d
+          </button>
+        ))}
+      </div>
+
+      {/* KPI Cards — 2×2 grid */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+        {[
+          ["Total Queries",  fmtNum(t.actions),    t.actions > 0 ? `${fmtNum(t.analyze)} analyze · ${fmtNum(t.screener)} screen · ${fmtNum(t.pricer)} pricer` : "No data yet", "#2563EB"],
+          ["Token Spend",    fmtNum((t.tokens_in||0)+(t.tokens_out||0)), `${fmtNum(t.tokens_in)} in · ${fmtNum(t.tokens_out)} out`, "#7C3AED"],
+          ["AI Cost (INR)",  t.cost_inr > 0 ? `₹${t.cost_inr.toFixed(2)}` : "₹0.00", `$${(t.cost_usd||0).toFixed(4)} USD`, "#059669"],
+          ["Cache Hit Rate", fmtPct(t.cache_hit_rate), `${fmtNum(t.redis_hits)} hits · ${fmtNum(t.redis_misses)} misses`, "#F59E0B"],
+        ].map(([label,val,sub,col])=>(
+          <div key={label} style={{...S.half, borderLeft:`3px solid ${col}`}}>
+            <div style={S.label}>{label}</div>
+            <div style={{...S.big, fontSize:18, color:col}}>{val}</div>
+            <div style={S.sub}>{sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Cache savings */}
+      {t.cache_read > 0 && (
+        <div style={{...S.card, background:"#F0FDF4", border:"1px solid #86EFAC", marginBottom:10}}>
+          <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,color:"#15803D",marginBottom:4}}>
+            ✅ Anthropic Cache Savings ({days}d)
+          </div>
+          <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:"#166534"}}>
+            {fmtNum(t.cache_read)} tokens served from cache
+            &nbsp;·&nbsp; saved ≈ ₹{((t.cache_read/1e6)*(3.00-0.30)*84).toFixed(2)}
+            &nbsp;·&nbsp; {fmtNum(t.cache_create)} tokens written to cache
+          </div>
+        </div>
+      )}
+
+      {/* Daily activity chart */}
+      <div style={S.card}>
+        <div style={S.hdr}>📈 Daily Activity ({days}d)</div>
+        <div style={{display:"flex",alignItems:"flex-end",gap:3,height:80,marginBottom:8}}>
+          {daily.map((d,i)=>{
+            const h = Math.round((d.actions.total/maxActions)*72)+2;
+            const col = d.actions.total===0 ? "#E2E8F0" : "#2563EB";
+            return (
+              <div key={d.date} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center"}}>
+                <div title={`${d.date}: ${d.actions.total} queries`}
+                  style={{width:"100%",height:h,background:col,borderRadius:"3px 3px 0 0",
+                    cursor:"pointer",minHeight:2}}/>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",fontFamily:"Inter,sans-serif",fontSize:8,color:"#94A3B8"}}>
+          <span>{daily[0]?.date?.slice(5)||""}</span>
+          <span>{daily[Math.floor(daily.length/2)]?.date?.slice(5)||""}</span>
+          <span>{daily[daily.length-1]?.date?.slice(5)||""}</span>
+        </div>
+      </div>
+
+      {/* Token chart */}
+      <div style={S.card}>
+        <div style={S.hdr}>🔢 Output Tokens / Day</div>
+        <div style={{display:"flex",alignItems:"flex-end",gap:3,height:60,marginBottom:8}}>
+          {daily.map((d)=>{
+            const h = Math.round((d.tokens.out/maxOut)*54)+2;
+            return (
+              <div key={d.date} style={{flex:1}}>
+                <div title={`${d.date}: ${d.tokens.out} out tokens`}
+                  style={{width:"100%",height:h,background:"#7C3AED",borderRadius:"3px 3px 0 0",minHeight:2}}/>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Feature breakdown */}
+      <div style={S.card}>
+        <div style={S.hdr}>⚡ Queries by Feature ({days}d)</div>
+        {[
+          ["🔍 Analyze",  t.analyze||0,  "#2563EB"],
+          ["🎯 Screener", t.screener||0, "#7C3AED"],
+          ["🏘️ Pricer",  t.pricer||0,   "#059669"],
+        ].map(([label,val,col])=>{
+          const pct = barW(val, (t.analyze||0)+(t.screener||0)+(t.pricer||0));
+          return (
+            <div key={label} style={{marginBottom:8}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontFamily:"Inter,sans-serif",fontSize:11,color:"#374151",marginBottom:3}}>
+                <span>{label}</span><span style={{fontWeight:700,color:col}}>{fmtNum(val)}</span>
+              </div>
+              <div style={S.barBg}><div style={S.bar(pct,col)}/></div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Errors */}
+      {(daily.reduce((s,d)=>s+Object.values(d.errors).reduce((a,b)=>a+b,0),0) > 0) ? (
+        <div style={{...S.card, border:"1px solid #FCA5A5"}}>
+          <div style={S.hdr}>⚠️ Errors ({days}d)</div>
+          {["max_tokens","http_429","http_500","parse_fail"].map(k=>{
+            const total = daily.reduce((s,d)=>s+(d.errors[k]||0),0);
+            if(!total) return null;
+            return (
+              <div key={k} style={{display:"flex",justifyContent:"space-between",
+                fontFamily:"Inter,sans-serif",fontSize:11,color:"#374151",marginBottom:4}}>
+                <span>{k.replace(/_/g," ")}</span>
+                <span style={{fontWeight:700,color:"#DC2626"}}>{total}</span>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div style={{...S.card, background:"#F0FDF4", border:"1px solid #86EFAC"}}>
+          <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#15803D",fontWeight:600}}>
+            ✅ No errors in last {days} days
+          </div>
+        </div>
+      )}
+
+      {/* Top queries */}
+      {topQ.length > 0 && (
+        <div style={S.card}>
+          <div style={S.hdr}>🔥 Top Queries (last 7d)</div>
+          {topQ.slice(0,8).map((q,i)=>(
+            <div key={q.locality} style={{display:"flex",justifyContent:"space-between",
+              alignItems:"center",padding:"6px 0",
+              borderBottom:i<topQ.length-1?"1px solid #F1F5F9":"none"}}>
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:"#1E293B",fontWeight:i<3?700:500}}>
+                {i===0?"🥇":i===1?"🥈":i===2?"🥉":"  "} {q.locality}
+              </div>
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,color:"#2563EB"}}>
+                {q.count}×
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Cost per query */}
+      {t.actions > 0 && (
+        <div style={S.card}>
+          <div style={S.hdr}>💰 Cost Efficiency ({days}d)</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            {[
+              ["Avg cost/query",`₹${((t.cost_inr||0)/Math.max(t.actions,1)).toFixed(3)}`],
+              ["Redis save rate",fmtPct(t.cache_hit_rate)],
+              ["Tokens/query",fmtNum(((t.tokens_in||0)+(t.tokens_out||0))/Math.max(t.actions,1))],
+              ["Total spend",`₹${(t.cost_inr||0).toFixed(2)}`],
+            ].map(([l,v])=>(
+              <div key={l} style={{background:"#F8FAFC",borderRadius:8,padding:"10px"}}>
+                <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:"#94A3B8",marginBottom:3,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>{l}</div>
+                <div style={{fontFamily:"Georgia,serif",fontSize:16,fontWeight:900,color:"#0F172A"}}>{v}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!data || (t.actions === 0 && topQ.length === 0) ? (
+        <div style={{textAlign:"center",padding:"30px",fontFamily:"Inter,sans-serif",
+          fontSize:11,color:"#94A3B8",background:"#F8FAFC",borderRadius:10}}>
+          No data yet for this period. Stats will appear after the first API call.
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
 function AppInner(){
-  const [tab,setTab]=useState("home");
+  const [tab,setTab]=useState(()=>{
+    // Secret admin route — key comes from VITE_ADMIN_KEY env var
+    // Access via: nammajaga.com/?admin=YOUR_KEY
+    const adminKey = import.meta.env.VITE_ADMIN_KEY || "nj-admin-dev";
+    const params = new URLSearchParams(window.location.search);
+    if(params.get("admin") === adminKey) {
+      // Clean the URL so key isn't visible in browser history
+      window.history.replaceState({}, "", window.location.pathname);
+      return "stats";
+    }
+    return "home";
+  });
   const [analyzeQuery,setAnalyzeQuery]=useState("");
   useAppData(); // loads ETL data into REGION_CLUSTERS + INDIA_METRO_STATIONS
 
@@ -5770,6 +6066,7 @@ function AppInner(){
         {tab==="analyze"&&<AnalyzeTab key={analyzeQuery} initialQuery={analyzeQuery} onClear={()=>{setAnalyzeQuery("");setTab("home");}}/>}
         {tab==="screen"&&<ScreenerTab/>}
         {tab==="pricer"&&<PricerTab/>}
+        {tab==="stats"&&<StatsTab/>}
         {tab==="about"&&(
           <div style={{padding:"20px 16px",maxWidth:680,margin:"0 auto",display:"flex",flexDirection:"column",gap:16}}>
 
