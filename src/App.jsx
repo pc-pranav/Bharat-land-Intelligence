@@ -4,7 +4,8 @@ import React, { useState, useEffect, useRef, useMemo, Component } from "react";
 // When deployed standalone (e.g. on Vercel), this is automatically replaced with
 // "/api/claude" so requests route through the serverless proxy — which keeps your
 // API key server-side AND adds response caching (see DEPLOY.md and lib/cache.js).
-// To deploy: change the line below to const API_ENDPOINT = "/api/claude";
+// To deploy: replace API_ENDPOINT value below.
+const API_ENDPOINT = "/api/claude";
 const STATS_ENDPOINT = "/api/stats";
 
 // Fire-and-forget analytics — never throws, never blocks
