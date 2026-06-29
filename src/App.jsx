@@ -3084,7 +3084,7 @@ confidence_level, growth_zone,
 recommendation ("Buy Now"|"Accumulate"|"Watchlist"|"Hold"|"Avoid"),
 sentiment_score (int), sentiment_summary (1 sentence),
 similar_to (string), similarity_score (string)`,
-        800
+        2000
       );
       // p1 errors throw inside call() with descriptive message
       if(placeData?.lat && placeData?.lng) {
@@ -3116,7 +3116,7 @@ trajectory_profile: {
   price_when_mirror_was_here, price_of_mirror_today, growth_multiple_achieved,
   investor_window: "Early-Stage Opportunity|Active Appreciation Window|Late-Stage Entry|Post-Peak"
 }`,
-        1200, HAIKU),
+        1800, HAIKU),
 
         // Phase 3 — Market signals, civic projects, comparables
         call(3, `For "${aiLoc}", India — return ONLY compact raw JSON:
@@ -3152,7 +3152,7 @@ traffic_intelligence: {
 }
 water_quality_note: 2-3 sentences on source, TDS, seasonal issues.
 civic_grievances: array of 4 specific strings naming actual streets/locations.`,
-        1500, HAIKU),
+        1800, HAIKU),
 
         // Phase 5 — Price history
         call(5, `For "${aiLoc}", India — return ONLY compact raw JSON:
@@ -3577,12 +3577,18 @@ function HomeTab({onStateSelect,onNavigate}){
       <div style={{margin:"6px 12px 12px",background:"linear-gradient(135deg,#1B2D6B,#0D2E1A)",
         borderRadius:12,padding:"12px 14px"}}>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,textAlign:"center"}}>
-          {[["600+","Localities","#4ADE80"],["6","Cities","#60A5FA"],["5","AI Phases","#FCD34D"],["7-day","AI Cache","#F97316"]].map(([n,l,c])=>(
+          {[["600+","Localities","#4ADE80"],["5","AI Phases","#FCD34D"],["Live","Real-time Data","#60A5FA"],["₹0","per Search","#4ADE80"]].map(([n,l,c])=>(
             <div key={l}>
               <div style={{color:c,fontSize:16,fontWeight:900,fontFamily:"Georgia"}}>{n}</div>
               <div style={{color:"#475569",fontSize:8,marginTop:3,fontWeight:600,fontFamily:"Inter,sans-serif"}}>{l}</div>
             </div>
           ))}
+        </div>
+        <div style={{borderTop:"1px solid rgba(255,255,255,0.08)",marginTop:10,paddingTop:8,
+          textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+          <span style={{fontSize:10,fontWeight:700,color:"#4ADE80"}}>🇮🇳</span>
+          <span style={{fontSize:10,fontWeight:700,color:"#94A3B8",letterSpacing:1}}>PAN-INDIA COVERAGE</span>
+          <span style={{fontSize:10,fontWeight:700,color:"#4ADE80"}}>🇮🇳</span>
         </div>
       </div>
 
