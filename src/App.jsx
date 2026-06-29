@@ -5841,7 +5841,7 @@ function StatsTab() {
           ["Total Queries",  fmtNum(t.actions),    t.actions > 0 ? `${fmtNum(t.analyze)} analyze · ${fmtNum(t.screener)} screen · ${fmtNum(t.pricer)} pricer` : "No data yet", "#2563EB"],
           ["Token Spend",    fmtNum((t.tokens_in||0)+(t.tokens_out||0)), `${fmtNum(t.tokens_in)} in · ${fmtNum(t.tokens_out)} out`, "#7C3AED"],
           ["AI Cost (INR)",  t.cost_inr > 0 ? `₹${t.cost_inr.toFixed(2)}` : "₹0.00", `$${(t.cost_usd||0).toFixed(4)} USD`, "#059669"],
-          ["Cache Hit Rate", fmtPct(t.cache_hit_rate), `${fmtNum(t.redis_hits)} hits · ${fmtNum(t.redis_misses)} misses`, "#F59E0B"],
+          ["Redis Hit Rate", t.cache_hit_rate != null ? fmtPct(t.cache_hit_rate) : "No repeats yet", t.redis_hits===0&&t.redis_misses===0 ? "Search a locality twice to see hits" : `${fmtNum(t.redis_hits)} hits · ${fmtNum(t.redis_misses)} misses`, "#F59E0B"],
         ].map(([label,val,sub,col])=>(
           <div key={label} style={{...S.half, borderLeft:`3px solid ${col}`}}>
             <div style={S.label}>{label}</div>
@@ -5852,18 +5852,27 @@ function StatsTab() {
       </div>
 
       {/* Cache savings */}
-      {t.cache_read > 0 && (
-        <div style={{...S.card, background:"#F0FDF4", border:"1px solid #86EFAC", marginBottom:10}}>
-          <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,color:"#15803D",marginBottom:4}}>
-            ✅ Anthropic Cache Savings ({days}d)
-          </div>
-          <div style={{fontFamily:"Inter,sans-serif",fontSize:12,color:"#166534"}}>
-            {fmtNum(t.cache_read)} tokens served from cache
-            &nbsp;·&nbsp; saved ≈ ₹{((t.cache_read/1e6)*(3.00-0.30)*84).toFixed(2)}
-            &nbsp;·&nbsp; {fmtNum(t.cache_create)} tokens written to cache
-          </div>
+      <div style={{...S.card, background: t.cache_read>0?"#F0FDF4":"#F8FAFC",
+        border:`1px solid ${t.cache_read>0?"#86EFAC":"#E2E8F0"}`, marginBottom:10}}>
+        <div style={{fontFamily:"Inter,sans-serif",fontSize:11,fontWeight:700,
+          color:t.cache_read>0?"#15803D":"#94A3B8",marginBottom:6}}>
+          {t.cache_read>0?"✅":"📦"} Anthropic Prompt Cache ({days}d)
         </div>
-      )}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          {[
+            ["Cache Writes", fmtNum(t.cache_create||0)+" tok", "tokens written to 5-min cache"],
+            ["Cache Reads",  fmtNum(t.cache_read||0)+" tok",  t.cache_read>0?`saved ≈ ₹${((t.cache_read/1e6)*(3.00-0.30)*84).toFixed(2)}`:"search same locality twice"],
+            ["Redis Hits",   fmtNum(t.redis_hits||0),          "instant repeat searches"],
+            ["Redis Misses", fmtNum(t.redis_misses||0),        "fresh AI calls needed"],
+          ].map(([l,v,sub])=>(
+            <div key={l} style={{background:"rgba(255,255,255,0.7)",borderRadius:8,padding:"8px 10px"}}>
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:"#94A3B8",fontWeight:600,marginBottom:2}}>{l}</div>
+              <div style={{fontFamily:"Georgia,serif",fontSize:14,fontWeight:900,color:"#0F172A"}}>{v}</div>
+              <div style={{fontFamily:"Inter,sans-serif",fontSize:8,color:"#64748B",marginTop:2}}>{sub}</div>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Daily activity chart */}
       <div style={S.card}>
@@ -5990,7 +5999,13 @@ function StatsTab() {
       {!data || (t.actions === 0 && topQ.length === 0) ? (
         <div style={{textAlign:"center",padding:"30px",fontFamily:"Inter,sans-serif",
           fontSize:11,color:"#94A3B8",background:"#F8FAFC",borderRadius:10}}>
-          No data yet for this period. Stats will appear after the first API call.
+          No data yet for this period. Stats accumulate after first API call.
+        </div>
+      ) : (t.redis_hits===0 && t.redis_misses>0) ? (
+        <div style={{padding:"10px 12px",background:"#FFFBEB",border:"1px solid #FDE68A",
+          borderRadius:8,fontFamily:"Inter,sans-serif",fontSize:11,color:"#92400E",marginBottom:8}}>
+          💡 <strong>0% Redis Hit Rate is normal</strong> when every search is a unique locality.
+          Hits appear when the same locality is searched again within 7 days.
         </div>
       ) : null}
     </div>
