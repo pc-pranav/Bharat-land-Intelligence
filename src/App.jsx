@@ -2564,6 +2564,90 @@ function normalizeLocalitySlug(loc) {
   return s.replace(/[^a-z0-9_]+/g,'_').replace(/^_+|_+$/g,'').replace(/_+/g,'_');
 }
 
+
+// ── Pricing helper functions (module-level) ─────────────────────────
+
+function getCityTierRate(cityInput, propertyKind, localityInput){
+  // Try locality-level rate first (much more accurate)
+  if(localityInput) {
+    const localityRate = getLocalityRate(localityInput, cityInput, propertyKind);
+    if(localityRate) return localityRate;
+  }
+  // Fall back to city tier
+  const c = (cityInput||"").toLowerCase().trim();
+  for(const tier of ["tier1","tier2","tier3"]){
+    if(CITY_TIER_RATES[tier].cities.some(name=>c.includes(name))){
+      return CITY_TIER_RATES[tier][propertyKind] || CITY_TIER_RATES[tier].apartment;
+    }
+  }
+  return CITY_TIER_RATES.tier4[propertyKind] || CITY_TIER_RATES.tier4.apartment;
+}
+function getLocalityRate(locality, city, propKind) {
+  if(!locality) return null;
+  const loc = locality.toLowerCase().trim();
+  // Try exact and partial matches on locality string
+  for(const [key, rate] of Object.entries(LOCALITY_RATES)) {
+    if(loc.includes(key) || key.includes(loc.split(',')[0].trim())) {
+      // Scale non-apartment types using city tier ratios
+      if(propKind === 'villa')      return Math.round(rate * 1.28);
+      if(propKind === 'penthouse')  return Math.round(rate * 1.85);
+      if(propKind === 'plot')       return Math.round(rate * 0.48);
+      return rate; // apartment
+    }
+  }
+  return null; // fall back to city tier
+}
+function getAIPremium(locality, city) {
+  if(!locality) return 2000;
+  const loc = (locality + ' ' + (city||'')).toLowerCase();
+  const tier3k = ['koramangala','indiranagar','bandra','worli','lower parel',
+    'prabhadevi','adyar','besant nagar','defence colony','greater kailash',
+    'vasant kunj','jubilee hills','banjara hills','koregaon park','richmond town',
+    'mg road','jayanagar','malleshwaram','saket','golf course','dlf phase'];
+  const tier25k = ['whitefield','bellandur','hsr','marathahalli','hebbal',
+    'panathur','gachibowli','hitech city','madhapur','kondapur','financial district',
+    'powai','andheri','thane','viman nagar','kalyani nagar','baner','omr',
+    'velachery','anna nagar','wakad','kothrud','aundh','balewadi','kharadi'];
+  if(tier3k.some(t => loc.includes(t))) return 3000;
+  if(tier25k.some(t => loc.includes(t))) return 2500;
+  return 2000;
+}
+function getPropertyTaxRate(cityOrState){
+  const c=(cityOrState||"").toLowerCase();
+  for(const state in PROPERTY_TAX_RATES){
+    if(state!=="default" && c.includes(state)) return PROPERTY_TAX_RATES[state];
+  }
+  // City→state inference for common cities
+  const cityStateMap = {
+    "bengaluru":"karnataka","bangalore":"karnataka","mysore":"karnataka","mysuru":"karnataka",
+    "mumbai":"maharashtra","pune":"maharashtra","nagpur":"maharashtra","nashik":"maharashtra",
+    "chennai":"tamil nadu","coimbatore":"tamil nadu","madurai":"tamil nadu",
+    "hyderabad":"telangana","warangal":"telangana",
+    "delhi":"delhi","new delhi":"delhi",
+    "gurgaon":"haryana","gurugram":"haryana","faridabad":"haryana",
+    "noida":"uttar pradesh","lucknow":"uttar pradesh","kanpur":"uttar pradesh","agra":"uttar pradesh",
+    "kolkata":"west bengal","siliguri":"west bengal",
+    "ahmedabad":"gujarat","surat":"gujarat","vadodara":"gujarat","rajkot":"gujarat",
+    "jaipur":"rajasthan","jodhpur":"rajasthan","udaipur":"rajasthan",
+    "kochi":"kerala","cochin":"kerala","thiruvananthapuram":"kerala","trivandrum":"kerala",
+    "chandigarh":"punjab","amritsar":"punjab","ludhiana":"punjab","jalandhar":"punjab",
+    "visakhapatnam":"andhra pradesh","vizag":"andhra pradesh","vijayawada":"andhra pradesh",
+    "indore":"madhya pradesh","bhopal":"madhya pradesh",
+    "patna":"bihar","bhubaneswar":"odisha",
+  };
+  for(const city in cityStateMap){
+    if(c.includes(city)) return PROPERTY_TAX_RATES[cityStateMap[city]];
+  }
+  return PROPERTY_TAX_RATES.default;
+}
+function detectStateFromCity(cityInput){
+  const c=(cityInput||"").toLowerCase().trim();
+  for(const city in CITY_TO_STATE){
+    if(c.includes(city)) return CITY_TO_STATE[city];
+  }
+  return "Other / Generic";
+}
+
 function ScreenerTab(){
   const [f,setF]=useState({city:"Bengaluru",radius:100,minCagr:12,maxPrice:5000,minInfra:70,maxRisk:45});
   const [results,setResults]=useState(null);
@@ -2585,12 +2669,40 @@ Each object must have: location, district, state, current_price_sqft, expected_c
       const cacheKey="screener_"+f.city.toLowerCase().replace(/\s+/g,"_")+"_r"+f.radius+"_s"+f.minInfra;
       const res=await fetch(API_ENDPOINT,{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:3000,temperature:0,system:[{type:"text",text:SYS,cache_control:{type:"ephemeral"}}],
+        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1500,temperature:0,system:[{type:"text",text:SYS_MINI}],
           messages:[{role:"user",content:prompt}],cacheKey,cacheType:"screener"}),
       });
-      const d=await res.json();
-      if(d.error){setError("API: "+d.error.message);setLoading(false);return;}
-      const text=d.content?.map(b=>b.text||"").join("")||"";
+      // Handle SSE streaming (prod) or plain JSON (cache hit/artifact)
+      let text = "";
+      const ct = res.headers.get("content-type")||"";
+      if(ct.includes("text/event-stream")) {
+        const reader = res.body.getReader(); const dec = new TextDecoder();
+        let buf = "", finalText = null;
+        try {
+          while(true) {
+            const {done,value} = await reader.read(); if(done) break;
+            buf += dec.decode(value,{stream:true});
+            const lines = buf.split("\n"); buf = lines.pop();
+            for(const line of lines) {
+              if(!line.startsWith("data: ")) continue;
+              const raw = line.slice(6).trim(); if(!raw||raw==="[DONE]") continue;
+              try {
+                const evt = JSON.parse(raw);
+                if(evt.type==="delta") text += evt.text||"";
+                if(evt.type==="done") finalText = evt.response?.content?.[0]?.text||text;
+                if(evt.type==="error") throw new Error(evt.error||"Stream error");
+              } catch(e){ if(!e.message?.includes("JSON")&&!e.message?.includes("token")) throw e; }
+            }
+          }
+        } finally { reader.releaseLock(); }
+        text = finalText || text;
+      } else {
+        const d = await res.json().catch(()=>null);
+        if(!d) { setError("Invalid response from server"); setLoading(false); return; }
+        if(d.error){setError("API: "+d.error.message);setLoading(false);return;}
+        if(d._cacheHit) text = d.content?.[0]?.text||"";
+        else text = d.content?.map(b=>b.text||"").join("")||"";
+      }
       const parsed=parseJSON(text);
       if(parsed&&Array.isArray(parsed)) setResults(parsed.sort((a,b)=>(b.growth_score||0)-(a.growth_score||0)));
       else setError("Parse failed. Preview: "+text.slice(0,300));
@@ -3149,6 +3261,9 @@ price_history: array of 9 objects {year: int, price_sqft: int} from 2015-2025.
   );
 }
 
+
+// ── Pricing helper functions (module-level) ─────────────────────────────────
+
 function HomeTab({onStateSelect,onNavigate}){
   const [view,setView]=useState("search"); // "search" (default landing) or "map" (opened via link below)
   const [q,setQ]=useState("");
@@ -3185,99 +3300,296 @@ function HomeTab({onStateSelect,onNavigate}){
     );
   }
 
+  // ── Option C: Map-first + live score preview ─────────────────────────────
+  // placeData from Places autocomplete (has lat/lng/score preview)
+  const [homePlaceData, setHomePlaceData] = React.useState(null);
+  const [previewScore,  setPreviewScore]  = React.useState(null);
+  const [previewLoading,setPreviewLoading]= React.useState(false);
+
+  // When a place is selected, fetch quick scores via Phase 1 only
+  const fetchPreview = async (pd) => {
+    setHomePlaceData(pd);
+    setPreviewScore(null);
+    setPreviewLoading(true);
+    try {
+      const res = await fetch(API_ENDPOINT, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          model:"claude-haiku-4-5-20251001",
+          max_tokens: 300,
+          temperature: 0,
+          system:[{type:"text",text:SYS_MINI}],
+          messages:[{role:"user",content:`For "${pd.display||pd.locality}, India", return ONLY compact JSON:
+{"growth_score":int,"risk_score":int,"infrastructure_score":int,"population_score":int,"economic_score":int,"connectivity_score":int,"urban_expansion_score":int,"current_land_price":"₹X–Y/sqft","recommendation":"Buy Now|Accumulate|Watchlist|Hold|Avoid","expected_cagr":"X–Y%","growth_zone":"string"}`}],
+          cacheKey:`preview_${pd.placeId||pd.locality}`,
+          cacheType:"analyze"
+        })
+      });
+      // Handle SSE
+      const ct = res.headers.get("content-type")||"";
+      let text = "";
+      if(ct.includes("text/event-stream")) {
+        const reader = res.body.getReader(); const dec = new TextDecoder();
+        let buf = "", finalText = null;
+        while(true) {
+          const {done,value} = await reader.read(); if(done) break;
+          buf += dec.decode(value,{stream:true});
+          const lines = buf.split("\n"); buf = lines.pop();
+          for(const line of lines) {
+            if(!line.startsWith("data: ")) continue;
+            const raw = line.slice(6).trim();
+            try { const e=JSON.parse(raw); if(e.type==="delta") text+=e.text||""; if(e.type==="done") finalText=e.response?.content?.[0]?.text||text; } catch(_){}
+          }
+        }
+        text = finalText||text;
+      } else {
+        const d = await res.json().catch(()=>null);
+        text = d?._cacheHit ? d.content?.[0]?.text||"" : d?.content?.map(b=>b.text||"").join("")||"";
+      }
+      const parsed = parseJSON(text);
+      if(parsed && parsed.growth_score) setPreviewScore(parsed);
+    } catch(_) {}
+    setPreviewLoading(false);
+  };
+
+  const scoreCol = (s) => s>=75?"#10B981":s>=60?"#F59E0B":"#EF4444";
+  const recCol   = (r) => r==="Buy Now"?"#10B981":r==="Accumulate"?"#2563EB":r==="Watchlist"?"#7C3AED":"#EF4444";
+
   return(
-    <div style={{display:"flex",flexDirection:"column",gap:0}}>
-      {/* Search-first hero — replaces the map as the landing focus. The map
-          was the first thing people saw before, with no clear next action;
-          this leads with the one question the app actually answers. */}
-      <div style={{background:"linear-gradient(180deg,#0F1B2D,#16243A)",borderRadius:14,
-        padding:"30px 18px 24px",textAlign:"center",marginBottom:18}}>
-        <div style={{color:"#F8FAFB",fontFamily:"serif",fontSize:19,lineHeight:1.35,marginBottom:7}}>
-          Where are you<br/>looking to invest?
+    <div style={{display:"flex",flexDirection:"column",gap:0,background:"#F1F5F9",minHeight:"100vh"}}>
+
+      {/* ── MAP HERO ──────────────────────────────────────────────────────── */}
+      <div style={{position:"relative",height:240,overflow:"hidden"}}>
+        <MapView onStateClick={onStateSelect} height={240} mode="home"/>
+        {/* Gradient overlay at bottom */}
+        <div style={{position:"absolute",bottom:0,left:0,right:0,height:80,
+          background:"linear-gradient(to top,#F1F5F9,transparent)"}}/>
+        {/* Road/Satellite toggle */}
+        <div style={{position:"absolute",top:10,right:10,display:"flex",gap:4}}>
+          {["Road","Satellite"].map((t,i)=>(
+            <div key={t} style={{background:i===0?"rgba(255,255,255,0.95)":"rgba(0,0,0,0.45)",
+              backdropFilter:"blur(6px)",borderRadius:6,padding:"4px 10px",
+              fontSize:9,color:i===0?"#1B2D6B":"#94A3B8",fontFamily:"Inter,sans-serif",
+              fontWeight:700,border:i===0?"1.5px solid #1B2D6B":"1px solid rgba(255,255,255,0.15)"}}>{t}</div>
+          ))}
         </div>
-        <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:12,marginBottom:18}}>
-          Type any locality in India to get a growth score
+        {/* Legend */}
+        <div style={{position:"absolute",bottom:12,left:12,display:"flex",gap:5}}>
+          {[["#059669","80+ Hot"],["#F59E0B","65–79"],["#EF4444","<65"]].map(([c,l])=>(
+            <div key={l} style={{background:"rgba(255,255,255,0.92)",backdropFilter:"blur(4px)",
+              borderRadius:5,padding:"2px 7px",fontSize:8,fontWeight:700,color:c,
+              fontFamily:"Inter,sans-serif",boxShadow:"0 1px 4px rgba(0,0,0,0.12)"}}>● {l}</div>
+          ))}
         </div>
-        <div style={{background:"#fff",borderRadius:12,padding:5,display:"flex",gap:5,
-          boxShadow:"0 8px 22px rgba(0,0,0,0.25)"}}>
-          <input value={q} onChange={e=>setQ(e.target.value)}
-            onKeyDown={e=>{if(e.key==="Enter") goAnalyze(q);}}
-            placeholder="Whitefield, Bengaluru"
-            style={{flex:1,border:"none",outline:"none",padding:"10px 11px",fontSize:13,
-              color:C.dark,fontFamily:"Inter,sans-serif",borderRadius:8}}/>
-          <button onClick={()=>goAnalyze(q)} style={{background:C.navy,color:"#fff",border:"none",
-            borderRadius:8,padding:"0 15px",fontSize:12.5,fontWeight:700,cursor:"pointer",
-            fontFamily:"Inter,sans-serif",whiteSpace:"nowrap"}}>Analyze →</button>
+        <div style={{position:"absolute",bottom:12,right:12,fontSize:8,
+          color:"rgba(0,0,0,0.4)",fontFamily:"Inter,sans-serif"}}>© Google</div>
+      </div>
+
+      {/* ── SEARCH CARD overlapping map ────────────────────────────────────── */}
+      <div style={{margin:"-12px 12px 0",background:"#fff",borderRadius:"14px 14px 0 0",
+        border:"1.5px solid #E2E8F0",borderBottom:"none",
+        boxShadow:"0 -4px 20px rgba(0,0,0,0.12)",padding:"12px 12px 0",zIndex:5}}>
+
+        {/* Places search input */}
+        <PlacesSearchInput
+          value={q}
+          onChange={v=>{setQ(v); if(homePlaceData&&v!==homePlaceData.display){setHomePlaceData(null);setPreviewScore(null);}}}
+          onSelect={pd=>{setQ(pd.display||pd.locality||""); fetchPreview(pd);}}
+          onSearch={()=>goAnalyze(q)}
+          loading={previewLoading}
+          placeholder="Search any locality — Whitefield, Gachibowli…"
+        />
+
+        {/* Autocomplete hint row */}
+        <div style={{display:"flex",alignItems:"center",gap:5,padding:"6px 2px 8px",
+          borderBottom:"1px solid #F1F5F9"}}>
+          <span style={{fontSize:9,color:"#94A3B8",fontFamily:"Inter,sans-serif"}}>Powered by</span>
+          <span style={{fontSize:10,fontWeight:900}}>
+            <span style={{color:"#4285F4"}}>G</span><span style={{color:"#EA4335"}}>o</span>
+            <span style={{color:"#FBBC05"}}>o</span><span style={{color:"#4285F4"}}>g</span>
+            <span style={{color:"#34A853"}}>l</span><span style={{color:"#EA4335"}}>e</span>
+          </span>
+          <span style={{fontSize:9,color:"#94A3B8",fontFamily:"Inter,sans-serif"}}>Maps · Autocomplete</span>
+          <span style={{fontSize:9,color:"#10B981",fontWeight:700,fontFamily:"Inter,sans-serif",marginLeft:"auto"}}>✓ Active</span>
         </div>
-        <div style={{display:"flex",gap:5,marginTop:10,flexWrap:"wrap",justifyContent:"center"}}>
-          {["Dholera, Gujarat","Aerocity, Delhi","Sarjapur, Bengaluru"].map(s=>(
-            <button key={s} onClick={()=>goAnalyze(s)} style={{background:"rgba(255,255,255,0.1)",
-              color:"#CBD5E1",fontSize:10.5,padding:"4px 10px",borderRadius:13,
-              border:"1px solid rgba(255,255,255,0.15)",cursor:"pointer",fontFamily:"Inter,sans-serif"}}>{s}</button>
+
+        {/* Quick-search chips */}
+        <div style={{display:"flex",gap:6,overflowX:"auto",padding:"8px 0 10px",
+          scrollbarWidth:"none"}}>
+          {topCities.slice(0,6).map(c=>(
+            <button key={c.name} onClick={()=>{setQ(c.name+", "+c.state); goAnalyze(c.name+", "+c.state);}}
+              style={{flexShrink:0,padding:"5px 11px",borderRadius:20,fontSize:10,fontWeight:600,
+                cursor:"pointer",background:"#F1F5F9",color:"#374151",border:"1.5px solid #E2E8F0",
+                fontFamily:"Inter,sans-serif",whiteSpace:"nowrap"}}>
+              {c.score>=75?"🔥":c.score>=65?"📈":"📊"} {c.name.split(" (")[0]}
+            </button>
           ))}
         </div>
       </div>
 
-      {/* Secondary tools — present but visually quiet, since search is the
-          primary path now and these are alternate entry points. */}
-      <div style={{fontFamily:"Inter,sans-serif",fontSize:10.5,fontWeight:700,color:C.muted,
-        textTransform:"uppercase",letterSpacing:0.4,marginBottom:9}}>Or use a different tool</div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(96px,1fr))",gap:8,marginBottom:18}}>
-        {[
-          {tab:"screen",icon:"🎯",title:"Screener",desc:"Find opportunities"},
-          {tab:"pricer",icon:"🏘️",title:"Pricer",desc:"Value a property"},
-        ].map(f=>(
-          <button key={f.tab} onClick={()=>onNavigate(f.tab)}
-            style={{background:C.bg,border:"1px solid "+C.border,borderRadius:10,
-              padding:"12px 8px",cursor:"pointer",textAlign:"center",
-              display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-            <span style={{fontSize:18}}>{f.icon}</span>
-            <span style={{fontFamily:"serif",fontSize:11.5,color:C.dark}}>{f.title}</span>
-            <span style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>{f.desc}</span>
-          </button>
-        ))}
-        <button onClick={()=>setView("map")}
-          style={{background:C.bg,border:"1px solid "+C.border,borderRadius:10,
-            padding:"12px 8px",cursor:"pointer",textAlign:"center",
-            display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-          <span style={{fontSize:18}}>🗺️</span>
-          <span style={{fontFamily:"serif",fontSize:11.5,color:C.dark}}>Map</span>
-          <span style={{fontFamily:"Inter,sans-serif",fontSize:9,color:C.muted}}>Browse states</span>
-        </button>
-      </div>
+      {/* ── LIVE SCORE PREVIEW (appears after selecting from autocomplete) ── */}
+      <div style={{margin:"0 12px",background:"#fff",border:"1.5px solid #E2E8F0",
+        borderTop:"none",borderRadius:"0 0 14px 14px",
+        boxShadow:"0 4px 16px rgba(0,0,0,0.06)",overflow:"hidden"}}>
 
-      {/* Top investment areas — real ranked list pulled from curated city/area
-          data across every state (REGION_CLUSTERS), not a single hardcoded
-          pick. Tapping any row jumps straight into a full Analyze report. */}
-      <div style={{fontFamily:"Inter,sans-serif",fontSize:10.5,fontWeight:700,color:C.muted,
-        textTransform:"uppercase",letterSpacing:0.4,marginBottom:9}}>Top investment areas across India</div>
-      <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:18}}>
-        {topCities.map((c,i)=>(
-          <button key={c.name} onClick={()=>goAnalyze(c.name.split(" (")[0]+", "+c.state)}
-            style={{display:"flex",alignItems:"center",gap:10,background:"#fff",
-              border:"1px solid "+C.border,borderRadius:10,padding:"10px 12px",
-              cursor:"pointer",textAlign:"left",width:"100%"}}>
-            <span style={{fontFamily:"serif",fontSize:12,color:"#CBD5E1",width:16,flexShrink:0}}>{i+1}</span>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontFamily:"serif",fontSize:13,color:C.dark,whiteSpace:"nowrap",
-                overflow:"hidden",textOverflow:"ellipsis"}}>{c.name}</div>
-              <div style={{fontFamily:"Inter,sans-serif",fontSize:10.5,color:C.muted}}>{c.state}</div>
+        {previewLoading&&(
+          <div style={{padding:"14px 14px",display:"flex",alignItems:"center",gap:8,
+            background:"linear-gradient(135deg,#0F1B2D,#1E3A5F)"}}>
+            <div style={{width:20,height:20,border:"2px solid #2563EB",borderTopColor:"transparent",
+              borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
+            <div style={{color:"#94A3B8",fontSize:11,fontFamily:"Inter,sans-serif"}}>
+              Fetching intelligence for {homePlaceData?.display||q}…
             </div>
-            <span style={{flexShrink:0,background:scoreColor(c.score),color:"#fff",borderRadius:5,
-              padding:"3px 8px",fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:11}}>{c.score}</span>
-          </button>
-        ))}
+          </div>
+        )}
+
+        {previewScore&&!previewLoading&&(
+          <div style={{background:"linear-gradient(135deg,#0F1B2D,#1E3A5F)",padding:"14px 14px"}}>
+            {/* Location + recommendation */}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+              <div>
+                <div style={{color:"#64748B",fontSize:9,letterSpacing:1,fontFamily:"Inter,sans-serif",marginBottom:3}}>
+                  {homePlaceData?.state?.toUpperCase()||""} · {homePlaceData?.city?.toUpperCase()||""}
+                </div>
+                <div style={{color:"#F8FAFB",fontSize:17,fontWeight:800,letterSpacing:-0.5,
+                  fontFamily:"Inter,sans-serif"}}>{homePlaceData?.locality||q}</div>
+                <div style={{color:"#94A3B8",fontSize:10,marginTop:3,fontFamily:"Inter,sans-serif"}}>
+                  {previewScore.current_land_price} · {previewScore.expected_cagr} CAGR
+                </div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{background:recCol(previewScore.recommendation),color:"#fff",
+                  fontSize:11,fontWeight:700,padding:"5px 12px",borderRadius:10,
+                  fontFamily:"Inter,sans-serif",marginBottom:4}}>
+                  {previewScore.recommendation}
+                </div>
+                <div style={{color:"#4ADE80",fontSize:10,fontWeight:600,fontFamily:"Inter,sans-serif"}}>
+                  {previewScore.growth_zone}
+                </div>
+              </div>
+            </div>
+
+            {/* Score rings */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6,marginBottom:10}}>
+              {[
+                ["Infra",previewScore.infrastructure_score],
+                ["Pop",previewScore.population_score],
+                ["Economic",previewScore.economic_score],
+                ["Connect",previewScore.connectivity_score],
+                ["Urban",previewScore.urban_expansion_score],
+              ].map(([label,score])=>{
+                const col = scoreCol(score||0);
+                const circ = Math.round((score||0)/100*113.1);
+                return(
+                  <div key={label} style={{textAlign:"center"}}>
+                    <svg width="44" height="44" viewBox="0 0 44 44">
+                      <circle cx="22" cy="22" r="18" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="3"/>
+                      <circle cx="22" cy="22" r="18" fill="none" stroke={col} strokeWidth="3"
+                        strokeDasharray={`${circ} 113.1`} strokeLinecap="round"
+                        transform="rotate(-90 22 22)"/>
+                      <text x="22" y="26" fontSize="11" fill={col} textAnchor="middle"
+                        fontFamily="Inter,sans-serif" fontWeight="800">{score}</text>
+                    </svg>
+                    <div style={{fontSize:8,color:"#64748B",fontFamily:"Inter,sans-serif",marginTop:1}}>{label}</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Key stats */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:10}}>
+              {[
+                ["Growth Score",previewScore.growth_score+"/100","#4ADE80"],
+                ["Risk Score",(previewScore.risk_score||0)+"/100",previewScore.risk_score<40?"#10B981":"#EF4444"],
+                ["CAGR Est.",previewScore.expected_cagr,"#FCD34D"],
+              ].map(([l,v,c])=>(
+                <div key={l} style={{background:"rgba(255,255,255,0.06)",borderRadius:8,padding:"8px 6px",textAlign:"center"}}>
+                  <div style={{color:"#64748B",fontSize:8,fontFamily:"Inter,sans-serif",marginBottom:3}}>{l}</div>
+                  <div style={{color:c,fontSize:13,fontWeight:800,fontFamily:"Inter,sans-serif"}}>{v}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* CTA */}
+            <button onClick={()=>goAnalyze(q)}
+              style={{width:"100%",background:"linear-gradient(135deg,#2563EB,#1D4ED8)",color:"#fff",
+                border:"none",borderRadius:10,padding:11,fontFamily:"Inter,sans-serif",
+                fontSize:13,fontWeight:700,cursor:"pointer"}}>
+              🔍 Full Analysis — All 5 Phases →
+            </button>
+          </div>
+        )}
+
+        {!previewScore&&!previewLoading&&(
+          <div style={{padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:24}}>🔍</span>
+            <div>
+              <div style={{fontSize:11,fontWeight:700,color:"#1E293B",fontFamily:"Inter,sans-serif"}}>
+                Search any Indian locality
+              </div>
+              <div style={{fontSize:10,color:"#94A3B8",fontFamily:"Inter,sans-serif",marginTop:2}}>
+                Type above or tap a chip — see live scores instantly
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
-      
-
-      {topCities[0]&&(
-        <div style={{background:"#FFFBEB",borderRadius:9,border:`1px solid #FDE68A`,padding:"11px 13px",
-          fontFamily:"Inter,sans-serif",fontSize:12,color:"#92400E"}}>
-          🔮 <strong>#1 right now — {topCities[0].name} ({topCities[0].score}/100, {topCities[0].state}).</strong>{" "}
-          Tap to run a full analysis.
+      {/* ── TRENDING LOCALITIES ───────────────────────────────────────────── */}
+      <div style={{padding:"12px 12px 6px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#0F172A",fontFamily:"Inter,sans-serif"}}>🔥 Trending</div>
+          <button onClick={()=>setView("map")} style={{background:"none",border:"none",
+            fontSize:10,color:"#2563EB",fontWeight:600,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>
+            Browse map →
+          </button>
         </div>
-      )}
+
+        {/* Horizontal scroll cards */}
+        <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:4,scrollbarWidth:"none"}}>
+          {topCities.map(c=>{
+            const col = scoreCol(c.score);
+            return(
+              <button key={c.name}
+                onClick={()=>{setQ(c.name+", "+c.state); goAnalyze(c.name+", "+c.state);}}
+                style={{flexShrink:0,width:148,background:"#fff",borderRadius:12,
+                  border:`1.5px solid #E2E8F0`,borderLeft:`4px solid ${col}`,
+                  padding:"11px 10px",cursor:"pointer",textAlign:"left",
+                  boxShadow:"0 1px 4px rgba(0,0,0,0.05)",fontFamily:"Inter,sans-serif"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7}}>
+                  <div style={{width:32,height:32,borderRadius:"50%",
+                    background:`${col}18`,display:"flex",alignItems:"center",
+                    justifyContent:"center",fontSize:12,fontWeight:900,color:col}}>{c.score}</div>
+                  <div style={{background:`${col}15`,color:col,fontSize:9,fontWeight:700,
+                    padding:"2px 7px",borderRadius:7}}>{c.score>=75?"Buy Now":c.score>=65?"Accumulate":"Watchlist"}</div>
+                </div>
+                <div style={{fontSize:12,fontWeight:700,color:"#0F172A",
+                  whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name.split(" (")[0]}</div>
+                <div style={{fontSize:9,color:"#94A3B8",marginTop:2}}>{c.state}</div>
+                {c.price&&<div style={{fontSize:10,fontWeight:600,color:"#374151",marginTop:4}}>{c.price}</div>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── STATS BAR ─────────────────────────────────────────────────────── */}
+      <div style={{margin:"6px 12px 12px",background:"linear-gradient(135deg,#1B2D6B,#0D2E1A)",
+        borderRadius:12,padding:"12px 14px"}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,textAlign:"center"}}>
+          {[["600+","Localities","#4ADE80"],["6","Cities","#60A5FA"],["5","AI Phases","#FCD34D"],["7-day","AI Cache","#F97316"]].map(([n,l,c])=>(
+            <div key={l}>
+              <div style={{color:c,fontSize:16,fontWeight:900,fontFamily:"Georgia"}}>{n}</div>
+              <div style={{color:"#475569",fontSize:8,marginTop:3,fontWeight:600,fontFamily:"Inter,sans-serif"}}>{l}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{padding:"4px 16px 16px",textAlign:"center",fontSize:9,color:"#94A3B8",fontFamily:"Inter,sans-serif"}}>
+        AI-generated analysis · Not financial advice · Verify before investing · nammajaga.com
+      </div>
+
     </div>
   );
 }
@@ -3544,21 +3856,7 @@ const CITY_TIER_RATES = {
   tier4: {apartment:2500, villa:2800, plot:700, penthouse:4200, cities:[]},
 };
 
-function getCityTierRate(cityInput, propertyKind, localityInput){
-  // Try locality-level rate first (much more accurate)
-  if(localityInput) {
-    const localityRate = getLocalityRate(localityInput, cityInput, propertyKind);
-    if(localityRate) return localityRate;
-  }
-  // Fall back to city tier
-  const c = (cityInput||"").toLowerCase().trim();
-  for(const tier of ["tier1","tier2","tier3"]){
-    if(CITY_TIER_RATES[tier].cities.some(name=>c.includes(name))){
-      return CITY_TIER_RATES[tier][propertyKind] || CITY_TIER_RATES[tier].apartment;
-    }
-  }
-  return CITY_TIER_RATES.tier4[propertyKind] || CITY_TIER_RATES.tier4.apartment;
-}
+
 
 // ── Locality-level base rates (₹/sqft for apartments) ─────────────────────────
 // Curated from market data — used to refine the city-tier base rate
@@ -3732,40 +4030,12 @@ const LOCALITY_RATES = {
 };
 
 // ── Get locality-adjusted rate ────────────────────────────────────────────────
-function getLocalityRate(locality, city, propKind) {
-  if(!locality) return null;
-  const loc = locality.toLowerCase().trim();
-  // Try exact and partial matches on locality string
-  for(const [key, rate] of Object.entries(LOCALITY_RATES)) {
-    if(loc.includes(key) || key.includes(loc.split(',')[0].trim())) {
-      // Scale non-apartment types using city tier ratios
-      if(propKind === 'villa')      return Math.round(rate * 1.28);
-      if(propKind === 'penthouse')  return Math.round(rate * 1.85);
-      if(propKind === 'plot')       return Math.round(rate * 0.48);
-      return rate; // apartment
-    }
-  }
-  return null; // fall back to city tier
-}
+
 
 // ── AI rate premium by locality tier (+2k–3k/sqft) ─────────────────────────
 // Applied on top of AI market_rate_sqft — AI tends to underestimate
 // on-ground premiums in high-demand micro-markets
-function getAIPremium(canonicalLocality, canonicalCity) {
-  if(!locality) return 2000;
-  const loc = (locality + ' ' + (city||'')).toLowerCase();
-  const tier3k = ['koramangala','indiranagar','bandra','worli','lower parel',
-    'prabhadevi','adyar','besant nagar','defence colony','greater kailash',
-    'vasant kunj','jubilee hills','banjara hills','koregaon park','richmond town',
-    'mg road','jayanagar','malleshwaram','saket','golf course','dlf phase'];
-  const tier25k = ['whitefield','bellandur','hsr','marathahalli','hebbal',
-    'panathur','gachibowli','hitech city','madhapur','kondapur','financial district',
-    'powai','andheri','thane','viman nagar','kalyani nagar','baner','omr',
-    'velachery','anna nagar','wakad','kothrud','aundh','balewadi','kharadi'];
-  if(tier3k.some(t => loc.includes(t))) return 3000;
-  if(tier25k.some(t => loc.includes(t))) return 2500;
-  return 2000;
-}
+
 
 
 // ── Property tax rates by state (approx annual % of assessed/market value) ──
@@ -3777,34 +4047,7 @@ const PROPERTY_TAX_RATES = {
   "default":0.18,
 };
 
-function getPropertyTaxRate(cityOrState){
-  const c=(cityOrState||"").toLowerCase();
-  for(const state in PROPERTY_TAX_RATES){
-    if(state!=="default" && c.includes(state)) return PROPERTY_TAX_RATES[state];
-  }
-  // City→state inference for common cities
-  const cityStateMap = {
-    "bengaluru":"karnataka","bangalore":"karnataka","mysore":"karnataka","mysuru":"karnataka",
-    "mumbai":"maharashtra","pune":"maharashtra","nagpur":"maharashtra","nashik":"maharashtra",
-    "chennai":"tamil nadu","coimbatore":"tamil nadu","madurai":"tamil nadu",
-    "hyderabad":"telangana","warangal":"telangana",
-    "delhi":"delhi","new delhi":"delhi",
-    "gurgaon":"haryana","gurugram":"haryana","faridabad":"haryana",
-    "noida":"uttar pradesh","lucknow":"uttar pradesh","kanpur":"uttar pradesh","agra":"uttar pradesh",
-    "kolkata":"west bengal","siliguri":"west bengal",
-    "ahmedabad":"gujarat","surat":"gujarat","vadodara":"gujarat","rajkot":"gujarat",
-    "jaipur":"rajasthan","jodhpur":"rajasthan","udaipur":"rajasthan",
-    "kochi":"kerala","cochin":"kerala","thiruvananthapuram":"kerala","trivandrum":"kerala",
-    "chandigarh":"punjab","amritsar":"punjab","ludhiana":"punjab","jalandhar":"punjab",
-    "visakhapatnam":"andhra pradesh","vizag":"andhra pradesh","vijayawada":"andhra pradesh",
-    "indore":"madhya pradesh","bhopal":"madhya pradesh",
-    "patna":"bihar","bhubaneswar":"odisha",
-  };
-  for(const city in cityStateMap){
-    if(c.includes(city)) return PROPERTY_TAX_RATES[cityStateMap[city]];
-  }
-  return PROPERTY_TAX_RATES.default;
-}
+
 
 
 // ── Nationwide land/property approval types — covers all major states/UTs ──
@@ -3853,13 +4096,7 @@ const CITY_TO_STATE = {
   "bhubaneswar":"Odisha","cuttack":"Odisha","puri":"Odisha",
 };
 
-function detectStateFromCity(cityInput){
-  const c=(cityInput||"").toLowerCase().trim();
-  for(const city in CITY_TO_STATE){
-    if(c.includes(city)) return CITY_TO_STATE[city];
-  }
-  return "Other / Generic";
-}
+
 
 const APPROVAL_IMPACT = {
   "BBMP A Khata":1.0,"BBMP B Khata":0.88,"BBMP E Khata":0.82,"Panchayat Khata":0.78,
@@ -4270,7 +4507,11 @@ function PricerTab(){
 
   // ── Main analysis call ─────────────────────────────────────────────────────
   const analyze = async () => {
-    if(!locality.trim()) { setError("Please enter locality"); return; }
+    // Re-compute canonical values at call time — not from render-time closures
+    const _canonical = pricerPlaceData?.locality || locality || "";
+    const _city      = pricerPlaceData?.city     || city     || "";
+    const _loc       = _canonical.trim();
+    if(!_loc) { setError("Please enter a locality in the Property step first"); return; }
     setLoading(true); setResult(null); setError(""); setShowFeedback(false);
     const est = calcEstimate();
     const gst = calcGST(est.total);
@@ -4285,9 +4526,9 @@ function PricerTab(){
     const prompt = `You are an expert Indian real estate valuation AI with deep knowledge of Indian cities, localities, builders, and market trends.
 Today's date: ${new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}.
 
-PRICING ACCURACY: market_rate_sqft MUST be realistic for this EXACT locality — not a generic city average. Override the formula estimate with your market knowledge where confident.
+PRICING ACCURACY: market_rate_sqft MUST be realistic for this EXACT _loc — not a generic _city average. Override the formula estimate with your market knowledge where confident.
 
-Property: ${propType} | Location: ${locality}, ${city}, India
+Property: ${propType} | Location: ${_loc}, ${_city||"India"}
 Config: ${isPlot?"Plot":bhk}, ${isPlot?plotArea+" "+plotAreaUnit:area+" sqft"} (${isPlot?"land":areaType})
 ${!isPlot?"Floor: "+selectedFloor+" of "+totalFloors+" | Blocks: "+totalBlocks+" | Common Walls: "+commonWalls:""}
 ${!isPlot&&!isVilla?"Total Flats: "+totalFlatsInBuilding+" ("+( totalFlatsInBuilding<=50?"Low density":totalFlatsInBuilding<=200?"Medium":totalFlatsInBuilding<=500?"High density":"Very high density")+")":""}
@@ -4317,7 +4558,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
   "accuracy_verdict": "Undervalued or Fair Value or Overvalued or Premium",
   "verdict_reason": "1 sentence",
   "ai_vs_formula_gap_pct": <integer>,
-  "locality_insight": "2 sentences about this market",
+  "_loc_insight": "2 sentences about this market",
   "price_trend": "Rising or Stable or Declining",
   "trend_reason": "1 sentence",
   "yoy_appreciation_pct": <number>,
@@ -4338,7 +4579,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
   "kid_friendliness": "Good or Average or Poor - reason",
   "price_history": [{"year":2017,"price_sqft":2800},{"year":2018,"price_sqft":3100},{"year":2019,"price_sqft":3400},{"year":2020,"price_sqft":3200},{"year":2021,"price_sqft":3600},{"year":2022,"price_sqft":4100},{"year":2023,"price_sqft":4700},{"year":2024,"price_sqft":5400}],
   "upcoming_civic_projects": [{"project":"name","status":"announced or UC","expected_completion":"2026","score_impact":"+5","price_impact":"+8-12%"}],
-  "comparable_projects": [{"name":"Project Name","rate_sqft":"₹7,500/sqft","distance":"0.8 km away","maps_link":"https://www.google.com/maps/search/ProjectName+${locality}+${city}"},{"name":"Another Project","rate_sqft":"₹6,800/sqft","distance":"1.2 km away","maps_link":"https://www.google.com/maps/search/AnotherProject+${locality}+${city}"}],
+  "comparable_projects": [{"name":"Project Name","rate_sqft":"₹7,500/sqft","distance":"0.8 km away","maps_link":"https://www.google.com/maps/search/ProjectName+${_loc}+${_city}"},{"name":"Another Project","rate_sqft":"₹6,800/sqft","distance":"1.2 km away","maps_link":"https://www.google.com/maps/search/AnotherProject+${_loc}+${_city}"}],
   "gst_applicable": ${isUC?"true":"false"},
   "gst_rate_pct": ${isUC?gst.rate:0},
   "gst_amount": ${isUC?gst.amount:0},
@@ -4354,13 +4595,13 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
   "investment_recommendation": "${isUC?"1 sentence investor advice":"null"}"
 }`;
 
-    const cacheKey = "pricer_"+ [locality,city,propType,isPlot?plotArea:area,bhk,selectedFloor,totalFloors,developer,constructionStatus,approvalType,legalStatus,amenityMode==="count"?amenityCount:selAmenities.slice().sort().join(","),carParking,waterQuality,hasLakeView,hasCityView,hasDuplex].join("_").toLowerCase().replace(/[^a-z0-9_]+/g,"_");
+    const cacheKey = "pricer_"+ [_loc,_city,propType,isPlot?plotArea:area,bhk,selectedFloor,totalFloors,developer,constructionStatus,approvalType,legalStatus,amenityMode==="count"?amenityCount:selAmenities.slice().sort().join(","),carParking,waterQuality,hasLakeView,hasCityView,hasDuplex].join("_").toLowerCase().replace(/[^a-z0-9_]+/g,"_");
 
     try {
       const res = await fetch(API_ENDPOINT, {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({model:"claude-sonnet-4-6", max_tokens:4000, temperature:0,
-          system:[{type:"text",text:SYS,cache_control:{type:"ephemeral"}}],
+        body: JSON.stringify({model:"claude-sonnet-4-6", max_tokens:1800, temperature:0,
+          system:[{type:"text",text:SYS_MINI}],
           messages:[{role:"user",content:prompt}], cacheKey, cacheType:"pricer"}),
       });
       if(!res.ok){ const e=await res.text().catch(()=>""); setError(`HTTP ${res.status}: ${e.slice(0,200)}`); setLoading(false); return; }
@@ -4397,7 +4638,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
       }
       const parsed = parseJSON(text);
       if(parsed) {
-        const aiPremium = getAIPremium(canonicalLocality, canonicalCity);
+        const aiPremium = getAIPremium(_loc, _city);
         const adjRate  = (parsed.market_rate_sqft||0) + aiPremium;
         const adjTotal = adjRate * (isPlot ? (+plotArea||1200) : (+area||1200));
         setResult({
@@ -4416,7 +4657,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
           market_rate_sqft:est.rate, total_value:est.total,
           low_estimate:est.low, high_estimate:est.high,
           accuracy_verdict:"Fair Value", verdict_reason:"Formula-based estimate",
-          ai_vs_formula_gap_pct:0, locality_insight:"AI analysis unavailable. Formula estimate shown.",
+          ai_vs_formula_gap_pct:0, _loc_insight:"AI analysis unavailable. Formula estimate shown.",
           price_trend:"Stable", yoy_appreciation_pct:8,
           comparable_projects:[], red_flags:[],
           resale_potential:"Medium", rental_yield_pct:3.5, best_for:"End User",
