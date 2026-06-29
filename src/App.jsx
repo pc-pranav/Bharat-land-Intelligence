@@ -2597,21 +2597,6 @@ function getLocalityRate(locality, city, propKind) {
   }
   return null; // fall back to city tier
 }
-function getAIPremium(locality, city) {
-  if(!locality) return 2000;
-  const loc = (locality + ' ' + (city||'')).toLowerCase();
-  const tier3k = ['koramangala','indiranagar','bandra','worli','lower parel',
-    'prabhadevi','adyar','besant nagar','defence colony','greater kailash',
-    'vasant kunj','jubilee hills','banjara hills','koregaon park','richmond town',
-    'mg road','jayanagar','malleshwaram','saket','golf course','dlf phase'];
-  const tier25k = ['whitefield','bellandur','hsr','marathahalli','hebbal',
-    'panathur','gachibowli','hitech city','madhapur','kondapur','financial district',
-    'powai','andheri','thane','viman nagar','kalyani nagar','baner','omr',
-    'velachery','anna nagar','wakad','kothrud','aundh','balewadi','kharadi'];
-  if(tier3k.some(t => loc.includes(t))) return 3000;
-  if(tier25k.some(t => loc.includes(t))) return 2500;
-  return 2000;
-}
 function getPropertyTaxRate(cityOrState){
   const c=(cityOrState||"").toLowerCase();
   for(const state in PROPERTY_TAX_RATES){
@@ -3023,30 +3008,44 @@ function AnalyzeTab({initialQuery="",onClear}){
             const {done,value} = await reader.read();
             if(done) break;
             buf += dec.decode(value, {stream:true});
-            // Process complete lines only
             const lines = buf.split("\n");
-            buf = lines.pop(); // keep last (possibly incomplete) line in buffer
+            buf = lines.pop();
             for(const line of lines) {
               if(!line.startsWith("data: ")) continue;
               const raw = line.slice(6).trim();
               if(!raw || raw==="[DONE]") continue;
               try {
                 const evt = JSON.parse(raw);
-                if(evt.type==="delta" && evt.text)  fullText += evt.text;
-                if(evt.type==="done"  && evt.response) {
-                  // Extract text from the done event's response object
-                  finalText = evt.response?.content?.[0]?.text || fullText;
+                if(evt.type==="delta" && evt.text) fullText += evt.text;
+                if(evt.type==="done") {
+                  // done event now sends text directly (not nested response object)
+                  finalText = evt.text || evt.response?.content?.[0]?.text || fullText;
                 }
                 if(evt.type==="error") throw new Error(evt.error||"Stream error");
               } catch(e) {
-                // Only rethrow real errors, not JSON parse glitches on malformed chunks
                 if(e.message && !e.message.includes("JSON") && !e.message.includes("token")) throw e;
               }
             }
           }
+          // Flush remaining buffer — catches any partial final line
+          if(buf.trim()) {
+            const raw = buf.startsWith("data: ") ? buf.slice(6).trim() : buf.trim();
+            if(raw && raw!=="[DONE]") {
+              try {
+                const evt = JSON.parse(raw);
+                if(evt.type==="delta" && evt.text) fullText += evt.text;
+                if(evt.type==="done") {
+                  // done event now sends text directly (not nested response object)
+                  finalText = evt.text || evt.response?.content?.[0]?.text || fullText;
+                }
+              } catch(_) {}
+            }
+          }
         } finally { reader.releaseLock(); }
 
-        // Prefer the done-event text (complete), fall back to accumulated deltas
+        // finalText = complete response from done event
+        // fullText  = accumulated deltas (may be partial if done event missed)
+        // Use finalText when available, otherwise try to repair fullText JSON
         const text = finalText || fullText;
         if(!text.trim()) throw new Error(`Phase ${phase}: empty response from stream`);
         const parsed = parseJSON(text);
@@ -3084,7 +3083,7 @@ confidence_level, growth_zone,
 recommendation ("Buy Now"|"Accumulate"|"Watchlist"|"Hold"|"Avoid"),
 sentiment_score (int), sentiment_summary (1 sentence),
 similar_to (string), similarity_score (string)`,
-        2000
+        2500
       );
       // p1 errors throw inside call() with descriptive message
       if(placeData?.lat && placeData?.lng) {
@@ -3100,23 +3099,25 @@ similar_to (string), similarity_score (string)`,
 
       const [p2, p3, p4, p5] = await Promise.all([
 
-        // Phase 2 — Investment thesis + drivers + risks + insight (text-heavy)
-        call(2, `For "${aiLoc}", India — return ONLY compact raw JSON:
+        // Phase 2 — Investment thesis + drivers + risks + trajectory
+        call(2, `For "${aiLoc}", India — return ONLY raw JSON, no markdown.
 
-investment_thesis: 3-4 sentences covering (1) what makes this location unique,
-  (2) who the ideal buyer is, (3) key risk, (4) upside catalyst and holding period.
-growth_drivers: array of 5 strings, each 1-2 sentences with specific named facts
-  (actual roads, companies, IT parks, metro lines, government projects).
-major_risks: array of 4 specific named risks (not generic).
-locality_insight: 2-3 sentences explaining the scoring with specific facts.
-trajectory_profile: {
-  current_stage: "Early Discovery|Rising|Established|Maturing|Saturated",
-  historical_mirror: specific locality + year comparison with price,
-  future_trajectory: 1 sentence on what this place becomes in 10 years,
-  price_when_mirror_was_here, price_of_mirror_today, growth_multiple_achieved,
-  investor_window: "Early-Stage Opportunity|Active Appreciation Window|Late-Stage Entry|Post-Peak"
+{
+  "investment_thesis": "3-4 sentences: (1) what makes this location unique, (2) who ideal buyer is, (3) key risk, (4) upside catalyst and holding period",
+  "growth_drivers": ["5 strings — each 1-2 sentences with SPECIFIC named facts: actual roads, IT parks, metro lines, companies, government projects"],
+  "major_risks": ["4 specific named risks — not generic, name actual issues"],
+  "locality_insight": "2-3 sentences explaining scores with specific facts",
+  "trajectory_profile": {
+    "current_stage": "Early Discovery|Rising|Established|Maturing|Saturated",
+    "historical_mirror": "which locality at which year does this resemble and why",
+    "future_trajectory": "what this place becomes in 10 years",
+    "price_when_mirror_was_here": "approx price at that reference year",
+    "price_of_mirror_today": "approx price of that locality today",
+    "growth_multiple_achieved": "e.g. 4x in 12 years",
+    "investor_window": "Early-Stage Opportunity|Active Appreciation Window|Late-Stage Entry|Post-Peak"
+  }
 }`,
-        1800, HAIKU),
+        2200, HAIKU),
 
         // Phase 3 — Market signals, civic projects, comparables
         call(3, `For "${aiLoc}", India — return ONLY compact raw JSON:
@@ -4644,8 +4645,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
       }
       const parsed = parseJSON(text);
       if(parsed) {
-        const aiPremium = getAIPremium(_loc, _city);
-        const adjRate  = (parsed.market_rate_sqft||0) + aiPremium;
+        const adjRate  = parsed.market_rate_sqft || 0;
         const adjTotal = adjRate * (isPlot ? (+plotArea||1200) : (+area||1200));
         setResult({
           ...parsed,
@@ -4654,7 +4654,7 @@ Return ONLY raw JSON (no markdown, start with {, end with }):
           low_estimate:      Math.round(adjTotal * 0.92),
           high_estimate:     Math.round(adjTotal * 1.10),
           our_estimate:est, isUC, constructionStatus, gst,
-          _premium: aiPremium,
+          _premium: 0,
         });
         setShowFeedback(true);
       } else {
