@@ -2481,62 +2481,6 @@ function ReportCard({data,pins,timing}){
           <div style={{fontFamily:"Inter,sans-serif",fontSize:11,color:C.dark}}>{data.water_quality_note}</div>
         </div>
       )}
-
-      {/* ── Query Performance ───────────────────────────────────────── */}
-      {timing&&(
-        <div style={{background:"#0F1B2D",borderRadius:12,padding:"14px 16px",marginTop:10,
-          border:"1px solid rgba(255,255,255,0.08)"}}>
-          <div style={{color:"#94A3B8",fontFamily:"Inter,sans-serif",fontSize:9,
-            fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>
-            ⚡ Query Performance
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
-            {[
-              ["First Score",`${(timing.p1ms/1000).toFixed(1)}s`,"P1 Sonnet · scores visible","#4ADE80"],
-              ["Full Report",`${(timing.totalMs/1000).toFixed(1)}s`,"All 5 phases complete","#60A5FA"],
-              ["P2-5 Time",`${((timing.totalMs-timing.p1ms)/1000).toFixed(1)}s`,"Haiku · ran in parallel","#FCD34D"],
-            ].map(([l,v,sub,col])=>(
-              <div key={l} style={{background:"rgba(255,255,255,0.06)",borderRadius:8,
-                padding:"10px 6px",textAlign:"center"}}>
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:8,color:"#64748B",
-                  fontWeight:600,marginBottom:4,textTransform:"uppercase"}}>{l}</div>
-                <div style={{fontFamily:"Georgia,serif",fontSize:18,fontWeight:900,color:col}}>{v}</div>
-                <div style={{fontFamily:"Inter,sans-serif",fontSize:8,color:"#475569",marginTop:3}}>{sub}</div>
-              </div>
-            ))}
-          </div>
-          <div style={{marginBottom:8}}>
-            <div style={{display:"flex",justifyContent:"space-between",
-              fontFamily:"Inter,sans-serif",fontSize:9,color:"#64748B",marginBottom:5}}>
-              <span>Phase timeline</span><span>Started {timing.startedAt}</span>
-            </div>
-            <div style={{position:"relative",height:20,background:"rgba(255,255,255,0.06)",
-              borderRadius:10,overflow:"hidden"}}>
-              <div style={{position:"absolute",left:0,top:0,height:"100%",
-                width:`${Math.round(timing.p1ms/timing.totalMs*100)}%`,
-                background:"linear-gradient(90deg,#1B2D6B,#2563EB)",
-                display:"flex",alignItems:"center",justifyContent:"center"}}>
-                <span style={{fontFamily:"Inter,sans-serif",fontSize:8,color:"#fff",fontWeight:700}}>
-                  P1 {(timing.p1ms/1000).toFixed(1)}s</span>
-              </div>
-              <div style={{position:"absolute",
-                left:`${Math.round(timing.p1ms/timing.totalMs*100)}%`,top:0,height:"100%",
-                width:`${Math.round((timing.totalMs-timing.p1ms)/timing.totalMs*100)}%`,
-                background:"rgba(96,165,250,0.35)",
-                display:"flex",alignItems:"center",justifyContent:"center"}}>
-                <span style={{fontFamily:"Inter,sans-serif",fontSize:8,color:"#93C5FD",fontWeight:700}}>
-                  P2-5 {((timing.totalMs-timing.p1ms)/1000).toFixed(1)}s</span>
-              </div>
-            </div>
-          </div>
-          <div style={{fontFamily:"Inter,sans-serif",fontSize:9,color:"#475569",
-            textAlign:"center",borderTop:"1px solid rgba(255,255,255,0.06)",paddingTop:8}}>
-            {timing.totalMs<12000?"🚀 Fast":timing.totalMs<20000?"✅ Normal":"🐢 Slow — peak hours"}
-            &nbsp;·&nbsp;Wall time {(timing.totalMs/1000).toFixed(1)}s
-            &nbsp;·&nbsp;Phases 2-5 ran in parallel
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -2733,13 +2677,19 @@ function ScreenerTab(){
     setLoading(true);setResults(null);setError("");
       trackEvent('screener', { city: f.city });
     try{
-      const prompt=`You are Namma Jaga AI. Find 5 real land investment opportunities within ${f.radius} km of ${f.city}, India.
+      const prompt=`You are Namma Jaga AI. Find UP TO 5 real land investment opportunities within ${f.radius} km of ${f.city}, India.
 Filters: Min CAGR ${f.minCagr}%, Max price Rs${f.maxPrice}/sqft, Min infra score ${f.minInfra}/100, Max risk ${f.maxRisk}/100.
 
 SCORING CONSISTENCY — use these verified baselines for known localities (growth_score is computed from sub-scores: infra 25%, population 20%, economic 20%, connectivity 15%, urban_expansion 10%, momentum 5%, scarcity 5%, adjusted for risk and catalyst):
 Whitefield/Bengaluru East: growth_score≈80 | Electronic City: growth_score≈72 | Devanahalli: growth_score≈74 | Gachibowli/Hyderabad: growth_score≈83 | Hinjewadi/Pune: growth_score≈76 | Dholera SIR: growth_score≈59 (high catalyst but very low population/scarcity) | Noida/Greater Noida: growth_score≈67
 
-Return ONLY a raw JSON array (no markdown fences, no wrapping object like {"opportunities":[...]} — must start with [ directly), sorted by growth_score descending.
+IMPORTANT — these filters may be unrealistic or mutually contradictory (e.g. very high CAGR demanded
+at a very low price ceiling, or near-zero risk demanded alongside near-perfect infrastructure — such
+combinations rarely exist in real markets). DO NOT invent or force-fit fake locations to satisfy
+impossible filters. If fewer than 5 real locations genuinely match, return only those that do —
+even if that means returning 0, 1, or 2 results. NEVER fabricate data to hit a count of 5.
+
+Return ONLY a raw JSON array (no markdown fences, no wrapping object like {"opportunities":[...]} — must start with [ directly), sorted by growth_score descending. An empty array [] is a valid and expected response when no real locations match.
 Each object must have: location, district, state, current_price_sqft, expected_cagr, infrastructure_score (integer), risk_score (integer), growth_score (integer), recommendation, one_line_thesis, lat (number), lng (number).`;
       const cacheKey="screener_"+f.city.toLowerCase().replace(/\s+/g,"_")+"_r"+f.radius+"_s"+f.minInfra;
       const res=await fetch(API_ENDPOINT,{
@@ -2810,7 +2760,18 @@ Each object must have: location, district, state, current_price_sqft, expected_c
         </button>
       </div>
       {error&&<div style={{color:C.red,fontFamily:"Inter,sans-serif",fontSize:11,padding:"9px 13px",background:"#FFF5F5",borderRadius:8,wordBreak:"break-all"}}>{error}</div>}
-      {results&&(
+      {results&&results.length===0&&(
+        <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:12,padding:18,
+          textAlign:"center",fontFamily:"Inter,sans-serif"}}>
+          <div style={{fontSize:28,marginBottom:8}}>🔍</div>
+          <div style={{fontWeight:700,fontSize:13,color:"#92400E",marginBottom:4}}>No matches found</div>
+          <div style={{fontSize:11,color:"#78716C",lineHeight:1.5}}>
+            No real locations satisfy all your filters together. Try relaxing one or two —
+            for example, lowering Min CAGR, raising Max Price, or lowering Min Infra Score.
+          </div>
+        </div>
+      )}
+      {results&&results.length>0&&(
         <>
           <div style={{fontFamily:"Inter,sans-serif",fontWeight:600,fontSize:13,color:C.dark}}>📍 {results.length} Opportunities — hover pins for details</div>
           <MapView pins={results} height={290} focusLat={results[0]?.lat} focusLng={results[0]?.lng} focusZoom={4}/>
