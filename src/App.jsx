@@ -2739,12 +2739,12 @@ Filters: Min CAGR ${f.minCagr}%, Max price Rs${f.maxPrice}/sqft, Min infra score
 SCORING CONSISTENCY — use these verified baselines for known localities (growth_score is computed from sub-scores: infra 25%, population 20%, economic 20%, connectivity 15%, urban_expansion 10%, momentum 5%, scarcity 5%, adjusted for risk and catalyst):
 Whitefield/Bengaluru East: growth_score≈80 | Electronic City: growth_score≈72 | Devanahalli: growth_score≈74 | Gachibowli/Hyderabad: growth_score≈83 | Hinjewadi/Pune: growth_score≈76 | Dholera SIR: growth_score≈59 (high catalyst but very low population/scarcity) | Noida/Greater Noida: growth_score≈67
 
-Return ONLY a JSON array (no markdown fences), sorted by growth_score descending.
+Return ONLY a raw JSON array (no markdown fences, no wrapping object like {"opportunities":[...]} — must start with [ directly), sorted by growth_score descending.
 Each object must have: location, district, state, current_price_sqft, expected_cagr, infrastructure_score (integer), risk_score (integer), growth_score (integer), recommendation, one_line_thesis, lat (number), lng (number).`;
       const cacheKey="screener_"+f.city.toLowerCase().replace(/\s+/g,"_")+"_r"+f.radius+"_s"+f.minInfra;
       const res=await fetch(API_ENDPOINT,{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1500,temperature:0,system:[{type:"text",text:SYS_MINI}],
+        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:2500,temperature:0,system:[{type:"text",text:SYS_MINI}],
           messages:[{role:"user",content:prompt}],cacheKey,cacheType:"screener"}),
       });
       // Handle SSE streaming (prod) or plain JSON (cache hit/artifact)
@@ -2779,7 +2779,15 @@ Each object must have: location, district, state, current_price_sqft, expected_c
         else text = d.content?.map(b=>b.text||"").join("")||"";
       }
       const parsed=parseJSON(text);
-      if(parsed&&Array.isArray(parsed)) setResults(parsed.sort((a,b)=>(b.growth_score||0)-(a.growth_score||0)));
+      // Accept either a raw array, or an object wrapping the array under a
+      // common key (Claude sometimes wraps despite instructions) — handles
+      // both {opportunities:[...]} and bare [...] shapes.
+      const arr = Array.isArray(parsed) ? parsed
+        : Array.isArray(parsed?.opportunities) ? parsed.opportunities
+        : Array.isArray(parsed?.results) ? parsed.results
+        : Array.isArray(parsed?.data) ? parsed.data
+        : null;
+      if(arr) setResults(arr.sort((a,b)=>(b.growth_score||0)-(a.growth_score||0)));
       else setError("Parse failed. Preview: "+text.slice(0,300));
     }catch(e){setError("Error: "+e.message);}
     setLoading(false);
