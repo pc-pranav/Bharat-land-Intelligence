@@ -2136,6 +2136,13 @@ function ReportCard({data,pins,timing}){
           <div style={{fontFamily:"Inter,sans-serif",fontWeight:700,fontSize:18,color:C.green}}>{data.confidence_level}</div>
         </div>
       </div>
+      {data._partialFailure&&data._partialFailure.length>0&&(
+        <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:9,padding:"9px 12px",
+          fontFamily:"Inter,sans-serif",fontSize:11,color:"#92400E",lineHeight:1.5}}>
+          ⚠️ Some sections didn't load this time: <strong>{data._partialFailure.join(", ")}</strong>.
+          Scores and pricing above are unaffected — try refreshing this search in a few seconds to get the rest.
+        </div>
+      )}
       {data.growth_zone&&(
         <div style={{background:gc+"18",border:`1.5px solid ${gc}`,borderRadius:9,padding:"10px 13px",fontFamily:"Inter,sans-serif"}}>
           <span style={{fontWeight:700,color:gc,fontSize:12}}>Zone: </span><span style={{color:C.dark,fontSize:12}}>{data.growth_zone}</span>
@@ -3160,7 +3167,7 @@ similar_to (string), similarity_score (string)`,
       // ── Phases 2-5: ALL parallel on Haiku ────────────────────────────────
       const HAIKU = "claude-haiku-4-5-20251001";
 
-      const [p2, p3, p4, p5] = await Promise.all([
+      const settled = await Promise.allSettled([
 
         // Phase 2 — Investment thesis + drivers + risks + trajectory
         call(2, `For "${aiLoc}", India — return ONLY raw JSON, no markdown.
@@ -3225,6 +3232,20 @@ price_history: array of 9 objects {year: int, price_sqft: int} from 2015-2025.
   Use realistic non-round numbers. Reflect COVID dip 2020-21, post-COVID recovery 2022-23.`,
         600, HAIKU),
       ]);
+
+      // Promise.allSettled — one phase failing no longer wipes out the other three.
+      // Each phase merges independently; failures are logged but don't block the rest.
+      const [r2, r3, r4, r5] = settled;
+      const p2 = r2.status==='fulfilled' ? r2.value : null;
+      const p3 = r3.status==='fulfilled' ? r3.value : null;
+      const p4 = r4.status==='fulfilled' ? r4.value : null;
+      const p5 = r5.status==='fulfilled' ? r5.value : null;
+      const failedPhases=[];
+      if(r2.status==='rejected'){console.warn('[NJ] Phase 2 failed:', r2.reason?.message);failedPhases.push('Investment Thesis');}
+      if(r3.status==='rejected'){console.warn('[NJ] Phase 3 failed:', r3.reason?.message);failedPhases.push('Market Signals');}
+      if(r4.status==='rejected'){console.warn('[NJ] Phase 4 failed:', r4.reason?.message);failedPhases.push('Traffic & Civic');}
+      if(r5.status==='rejected'){console.warn('[NJ] Phase 5 failed:', r5.reason?.message);failedPhases.push('Price History');}
+      if(failedPhases.length) setReport(r=>({...r,_partialFailure:failedPhases}));
 
       if(p2&&!Array.isArray(p2)) setReport(r=>({...r,...p2}));
       if(p3&&!Array.isArray(p3)) setReport(r=>({...r,...p3}));
